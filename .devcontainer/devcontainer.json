@@ -1,0 +1,17 @@
+{
+  "name": "weft",
+  "image": "mcr.microsoft.com/devcontainers/go:1-bookworm",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"],
+      "settings": {
+        "go.lintTool": "golangci-lint",
+        "gopls": {
+          "formatting.gofumpt": true
+        }
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}
