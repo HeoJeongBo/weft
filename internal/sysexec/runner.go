@@ -20,6 +20,7 @@ import (
 // StdStream identifies which stream a streamed line came from.
 type StdStream int
 
+// Stream identifiers for streamed output lines.
 const (
 	StreamStdout StdStream = iota
 	StreamStderr

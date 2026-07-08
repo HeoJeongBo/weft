@@ -13,6 +13,12 @@ linters:
     - nilerr
     - revive
   settings:
+    errcheck:
+      # Writes to stdout/stderr are intentionally unchecked throughout the CLI/TUI.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
     revive:
       rules:
         - name: exported

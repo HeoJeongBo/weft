@@ -21,42 +21,50 @@ type Config struct {
 	Cleanup      CleanupCfg      `koanf:"cleanup"`
 }
 
+// ProjectCfg identifies the project and its base branch.
 type ProjectCfg struct {
 	Name       string `koanf:"name"`
 	BaseBranch string `koanf:"base_branch"`
 }
 
+// BranchCfg configures session branch naming.
 type BranchCfg struct {
 	Prefix string `koanf:"prefix"`
 }
 
+// WorktreeCfg configures where session worktrees live.
 type WorktreeCfg struct {
 	Root string `koanf:"root"`
 }
 
+// DevcontainerCfg configures devcontainer usage.
 type DevcontainerCfg struct {
 	Enabled bool     `koanf:"enabled"`
 	Config  string   `koanf:"config"`
 	UpArgs  []string `koanf:"up_args"`
 }
 
+// TmuxCfg configures tmux session/window naming.
 type TmuxCfg struct {
 	Session string `koanf:"session"`
 	Window  string `koanf:"window"`
 }
 
+// ClaudeCfg configures how claude is launched in a session.
 type ClaudeCfg struct {
 	Command         string   `koanf:"command"`
 	ExecInContainer bool     `koanf:"exec_in_container"`
 	Args            []string `koanf:"args"`
 }
 
+// HooksCfg holds lifecycle hook commands.
 type HooksCfg struct {
 	PostCreate []string `koanf:"post_create"`
 	PreRemove  []string `koanf:"pre_remove"`
 	PostRemove []string `koanf:"post_remove"`
 }
 
+// CleanupCfg configures teardown behavior.
 type CleanupCfg struct {
 	DeleteBranch bool `koanf:"delete_branch"`
 	RequireClean bool `koanf:"require_clean"`

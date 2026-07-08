@@ -11,14 +11,6 @@ import (
 	"github.com/HeoJeongBo/weft/internal/sysexec"
 )
 
-// runnerFromCmd builds a sysexec.Runner honoring --verbose and --dry-run.
-func runnerFromCmd(cmd *cobra.Command) sysexec.Runner {
-	verbosity, _ := cmd.Flags().GetCount("verbose")
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	log := logx.New(os.Stderr, verbosity, false)
-	return sysexec.New(dryRun, log)
-}
-
 // openEngine resolves the current repository into an Engine.
 func openEngine(cmd *cobra.Command) (*engine.Engine, error) {
 	verbosity, _ := cmd.Flags().GetCount("verbose")

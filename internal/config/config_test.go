@@ -70,8 +70,12 @@ func TestOverridePathReplacesProject(t *testing.T) {
 	dir := t.TempDir()
 	proj := filepath.Join(dir, "weft.yaml")
 	override := filepath.Join(dir, "other.yaml")
-	os.WriteFile(proj, []byte("branch:\n  prefix: \"proj/\"\n"), 0o644)
-	os.WriteFile(override, []byte("branch:\n  prefix: \"override/\"\n"), 0o644)
+	if err := os.WriteFile(proj, []byte("branch:\n  prefix: \"proj/\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(override, []byte("branch:\n  prefix: \"override/\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	c, err := Load(Sources{ProjectPath: proj, OverridePath: override})
 	if err != nil {

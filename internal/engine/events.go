@@ -9,6 +9,7 @@ import (
 // EventKind classifies a progress event emitted during an orchestration.
 type EventKind string
 
+// Event kinds.
 const (
 	EventStep  EventKind = "step"  // a named step began
 	EventLog   EventKind = "log"   // a log line (often streamed from a command)

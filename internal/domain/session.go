@@ -7,6 +7,7 @@ import "time"
 // SessionStatus is a session's derived, at-a-glance state.
 type SessionStatus string
 
+// Session statuses.
 const (
 	StatusReady    SessionStatus = "ready"    // worktree + window + running container
 	StatusStarting SessionStatus = "starting" // container created/restarting, not yet running
@@ -19,6 +20,7 @@ const (
 // ClaudeState describes what the session's tmux window is running.
 type ClaudeState string
 
+// Claude pane states.
 const (
 	ClaudeRunning ClaudeState = "running"
 	ClaudeIdle    ClaudeState = "idle"
