@@ -40,6 +40,14 @@ script the same actions.`,
 		newInitCmd(),
 		newLsCmd(),
 		newStatusCmd(),
+		newNewCmd(),
+		newAttachCmd(),
+		newRmCmd(),
+		newStartCmd(),
+		newStopCmd(),
+		newExecCmd(),
+		newCdCmd(),
+		newRepairCmd(),
 	)
 	return root
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -31,4 +32,23 @@ func openEngine(cmd *cobra.Command) (*engine.Engine, error) {
 		return nil, err
 	}
 	return engine.Open(cmd.Context(), r, log, cwd, cfgPath)
+}
+
+// progressSink returns an engine.Sink that prints step headers to stderr, and
+// streamed log lines only when -v is set. Terminal EventDone/EventError are left
+// to the caller.
+func progressSink(cmd *cobra.Command) engine.Sink {
+	verbosity, _ := cmd.Flags().GetCount("verbose")
+	color := colorEnabled(cmd)
+	out := cmd.ErrOrStderr()
+	return func(ev engine.Event) {
+		switch ev.Kind {
+		case engine.EventStep:
+			fmt.Fprintf(out, "%s %s\n", colorize("▶", ansiCyan, color), ev.Step)
+		case engine.EventLog:
+			if verbosity > 0 {
+				fmt.Fprintf(out, "   %s\n", colorize(ev.Text, ansiDim, color))
+			}
+		}
+	}
 }

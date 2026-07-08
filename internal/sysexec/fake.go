@@ -20,11 +20,15 @@ func (c Call) Line() string { return cmdline(c.Name, c.Args) }
 // Handler for the result; a nil Handler returns empty success. Stream splits the
 // handler's Stdout into lines and feeds them to the sink.
 type FakeRunner struct {
-	mu       sync.Mutex
-	Calls    []Call
-	Handler  func(c Call) (Result, error)
-	LookFunc func(name string) (string, error)
+	mu         sync.Mutex
+	Calls      []Call
+	Handler    func(c Call) (Result, error)
+	LookFunc   func(name string) (string, error)
+	DryRunMode bool
 }
+
+// DryRun reports the configured dry-run mode (default false).
+func (f *FakeRunner) DryRun() bool { return f.DryRunMode }
 
 func (f *FakeRunner) record(kind, name string, args []string) Call {
 	c := Call{Kind: kind, Name: name, Args: append([]string(nil), args...)}

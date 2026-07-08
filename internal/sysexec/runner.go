@@ -46,11 +46,12 @@ type Runner interface {
 	Mutate(ctx context.Context, name string, args ...string) (Result, error)
 	Stream(ctx context.Context, sink func(Line), name string, args ...string) (Result, error)
 	Look(name string) (string, error)
+	DryRun() bool
 }
 
 // Exec is the real Runner backed by os/exec.
 type Exec struct {
-	DryRun bool
+	dryRun bool
 	Log    *slog.Logger
 }
 
@@ -59,8 +60,11 @@ func New(dryRun bool, log *slog.Logger) *Exec {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Exec{DryRun: dryRun, Log: log}
+	return &Exec{dryRun: dryRun, Log: log}
 }
+
+// DryRun reports whether mutations are skipped.
+func (e *Exec) DryRun() bool { return e.dryRun }
 
 // Look reports the absolute path of a binary on PATH.
 func (e *Exec) Look(name string) (string, error) { return exec.LookPath(name) }
@@ -78,7 +82,7 @@ func (e *Exec) Mutate(ctx context.Context, name string, args ...string) (Result,
 }
 
 func (e *Exec) capture(ctx context.Context, mutate bool, name string, args ...string) (Result, error) {
-	if mutate && e.DryRun {
+	if mutate && e.dryRun {
 		e.Log.Info("dry-run", "cmd", cmdline(name, args))
 		return Result{}, nil
 	}
@@ -102,7 +106,7 @@ func (e *Exec) capture(ctx context.Context, mutate bool, name string, args ...st
 // arrives, while also capturing the full output. Under dry-run it logs and skips.
 // A nil sink is allowed (behaves like Mutate but line-buffered).
 func (e *Exec) Stream(ctx context.Context, sink func(Line), name string, args ...string) (Result, error) {
-	if e.DryRun {
+	if e.dryRun {
 		e.Log.Info("dry-run", "cmd", cmdline(name, args))
 		return Result{}, nil
 	}

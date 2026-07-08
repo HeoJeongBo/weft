@@ -15,6 +15,7 @@ const (
 	ansiRed    = "\x1b[31m"
 	ansiGreen  = "\x1b[32m"
 	ansiYellow = "\x1b[33m"
+	ansiCyan   = "\x1b[36m"
 )
 
 func colorize(s, code string, on bool) string {

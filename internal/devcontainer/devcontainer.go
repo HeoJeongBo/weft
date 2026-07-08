@@ -58,6 +58,11 @@ func New(r sysexec.Runner) *Exec { return &Exec{r: r} }
 func (e *Exec) Up(ctx context.Context, sink func(sysexec.Line), opts UpOpts) (UpResult, error) {
 	res, runErr := e.r.Stream(ctx, sink, "devcontainer", upArgs(opts)...)
 
+	// Under dry-run nothing actually ran, so there is no result to parse.
+	if e.r.DryRun() {
+		return UpResult{Outcome: "success", ContainerID: "dry-run"}, nil
+	}
+
 	up, parseErr := parseUpResult(res.Stdout)
 	if runErr != nil {
 		if parseErr == nil && up.Description != "" {
