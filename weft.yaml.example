@@ -1,0 +1,48 @@
+# weft.yaml — per-project configuration.
+#
+# Precedence (highest first): CLI flags > ./weft.yaml > ~/.config/weft/config.yaml > defaults.
+# Tokens {project} {name} {repo} {branch} and a leading ~ are expanded.
+
+version: 1
+
+project:
+  # Defaults to the repository directory name.
+  name: myapp
+  # Base ref new worktrees branch from. Defaults to the repo's default branch.
+  base_branch: main
+
+branch:
+  # Session branch = prefix + session name, e.g. "weft/feat-auth".
+  prefix: "weft/"
+
+worktree:
+  # Where session worktrees are created. See README note on devcontainer gitdir mounts.
+  root: "~/.weft/worktrees/{project}"
+
+devcontainer:
+  enabled: true
+  config: ".devcontainer/devcontainer.json"
+  # Extra flags passed through to `devcontainer up`.
+  up_args: []
+
+tmux:
+  session: "weft/{project}"
+  window: "{name}"
+
+claude:
+  command: "claude"
+  # Run claude inside the devcontainer (via `devcontainer exec`). Set false to
+  # run it on the host against the worktree instead.
+  exec_in_container: true
+  args: []
+
+hooks:
+  post_create: []   # e.g. ["pnpm install"]
+  pre_remove: []
+  post_remove: []
+
+cleanup:
+  # Never delete branches unless explicitly asked (--delete-branch).
+  delete_branch: false
+  # Refuse `weft rm` when the worktree has uncommitted or unpushed work.
+  require_clean: true

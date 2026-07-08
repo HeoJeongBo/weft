@@ -1,0 +1,24 @@
+# Build output
+/weft
+/dist/
+*.exe
+*.test
+*.out
+
+# Coverage
+coverage.txt
+coverage.html
+
+# Dependencies
+/vendor/
+
+# Environment / editor / OS
+.env
+.env.*
+.DS_Store
+*.swp
+*~
+.idea/
+
+# weft local worktrees / cache
+/.weft/

@@ -1,0 +1,16 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      # Keep the Charm v2 stack (bubbletea/bubbles/lipgloss/huh) upgraded
+      # together in one reviewed PR — it is a young ecosystem.
+      charm:
+        patterns:
+          - "charm.land/*"
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

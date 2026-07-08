@@ -1,0 +1,34 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # The default set already enables errcheck, govet, ineffassign, staticcheck,
+  # and unused. We add a curated handful on top.
+  enable:
+    - bodyclose
+    - gocritic
+    - misspell
+    - nilerr
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/HeoJeongBo/weft
