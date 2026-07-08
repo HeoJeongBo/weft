@@ -4,6 +4,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/HeoJeongBo/weft/internal/tui"
 	"github.com/HeoJeongBo/weft/internal/version"
 	"github.com/HeoJeongBo/weft/internal/wefterr"
 )
@@ -22,8 +23,16 @@ script the same actions.`,
 		SilenceErrors: true,
 		Version:       version.String(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// TODO(m5): launch the TUI dashboard. For now, show help.
-			return cmd.Help()
+			// With no arguments, open the dashboard on a TTY; otherwise fall
+			// back to a one-shot `ls` (pipes, CI, `weft | cat`).
+			if !isTerminal(cmd.OutOrStdout()) {
+				return runLs(cmd, false)
+			}
+			e, err := openEngine(cmd)
+			if err != nil {
+				return err
+			}
+			return tui.Run(cmd.Context(), e)
 		},
 	}
 	root.SetVersionTemplate("{{.Version}}\n")

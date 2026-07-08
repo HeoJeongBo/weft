@@ -151,7 +151,12 @@ func colorEnabled(cmd *cobra.Command) bool {
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
 		return false
 	}
-	f, ok := cmd.OutOrStdout().(*os.File)
+	return isTerminal(cmd.OutOrStdout())
+}
+
+// isTerminal reports whether w is an interactive terminal.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
 	if !ok {
 		return false
 	}
