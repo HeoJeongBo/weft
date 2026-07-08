@@ -37,6 +37,9 @@ script the same actions.`,
 	root.AddCommand(
 		newVersionCmd(),
 		newDoctorCmd(),
+		newInitCmd(),
+		newLsCmd(),
+		newStatusCmd(),
 	)
 	return root
 }
