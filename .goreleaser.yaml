@@ -1,0 +1,75 @@
+version: 2
+
+project_name: weft
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: weft
+    main: ./cmd/weft
+    binary: weft
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X github.com/HeoJeongBo/weft/internal/version.Version={{ .Version }}
+      - -X github.com/HeoJeongBo/weft/internal/version.Commit={{ .Commit }}
+      - -X github.com/HeoJeongBo/weft/internal/version.Date={{ .CommitDate }}
+
+release:
+  github:
+    owner: HeoJeongBo
+    name: weft
+
+archives:
+  - id: weft
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+homebrew_casks:
+  - name: weft
+    homepage: "https://github.com/HeoJeongBo/weft"
+    description: "Orchestrate parallel Claude Code sessions across git worktrees + devcontainers"
+    license: "MIT"
+    dependencies:
+      - formula: tmux
+      - formula: git
+    caveats: |
+      weft also needs Docker (Docker Desktop, OrbStack, or colima) and the
+      Dev Container CLI, which are not Homebrew formulae:
+
+        npm install -g @devcontainers/cli
+
+      Run `weft doctor` to verify your environment.
+    # The binary is unsigned; strip the quarantine flag so Gatekeeper allows it.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "#{staged_path}/weft"]
+          end
+    repository:
+      owner: HeoJeongBo
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
