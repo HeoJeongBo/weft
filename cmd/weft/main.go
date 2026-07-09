@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,14 +16,11 @@ func main() {
 }
 
 // run executes the CLI and returns the process exit code, ensuring deferred
-// cleanup runs before the caller calls os.Exit.
+// cleanup runs before the caller calls os.Exit. fang renders any error itself,
+// so we only map it to an exit code here.
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := cli.NewRootCmd().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "weft: "+err.Error())
-		return cli.ExitCode(err)
-	}
-	return 0
+	return cli.ExitCode(cli.Execute(ctx))
 }

@@ -5,23 +5,27 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/HeoJeongBo/weft/internal/tui"
-	"github.com/HeoJeongBo/weft/internal/version"
 	"github.com/HeoJeongBo/weft/internal/wefterr"
 )
+
+// logo is the weft wordmark shown at the top of `weft --help`.
+const logo = `             __ _
+__ __ _____ / _| |_
+\ V  V / -_)  _|  _|
+ \_/\_/\___|_|  \__|`
 
 // NewRootCmd builds the root command with all subcommands attached.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "weft",
 		Short: "Orchestrate parallel Claude Code sessions across git worktrees + devcontainers",
-		Long: `weft weaves git worktrees, devcontainers, tmux, and Claude Code into one
+		Long: logo + "\n\n" + `weft weaves git worktrees, devcontainers, tmux, and Claude Code into one
 motion, and gives you a dashboard over every parallel session.
 
 Run "weft" with no arguments to open the dashboard, or use the subcommands to
 script the same actions.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Version:       version.String(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// With no arguments, open the dashboard on a TTY; otherwise fall
 			// back to a one-shot `ls` (pipes, CI, `weft | cat`).
@@ -35,7 +39,6 @@ script the same actions.`,
 			return tui.Run(cmd.Context(), e)
 		},
 	}
-	root.SetVersionTemplate("{{.Version}}\n")
 
 	pf := root.PersistentFlags()
 	pf.CountP("verbose", "v", "increase log verbosity (-v, -vv)")
