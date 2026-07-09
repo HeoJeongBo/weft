@@ -28,9 +28,20 @@ Run `weft doctor` to verify everything at once.
 ## Install
 
 ```sh
-brew install HeoJeongBo/tap/weft
-weft doctor      # verify your environment
-weft             # open the dashboard
+brew install HeoJeongBo/tap/weft   # once the Homebrew tap is published
+```
+
+Until then (or for local development), build from source:
+
+```sh
+git clone https://github.com/HeoJeongBo/weft && cd weft && make install
+```
+
+Then verify and launch:
+
+```sh
+weft doctor      # check the environment
+weft             # open the dashboard  (weft --help prints a styled command reference)
 ```
 
 ## Quick start
@@ -46,6 +57,41 @@ weft rm feat-auth          # tear it down (guards against losing uncommitted wor
 
 Or just run `weft` and drive everything from the dashboard.
 
+## Commands
+
+| Command                     | What it does                                                    |
+| --------------------------- | --------------------------------------------------------------- |
+| `weft new <name>`           | worktree + devcontainer + tmux window + claude, in one motion   |
+| `weft ls`                   | list sessions with live, reconciled status (`--json`)           |
+| `weft status <name>`        | detailed status of a single session                             |
+| `weft attach <name>`        | attach to a session's tmux window (`--start` to resume first)   |
+| `weft start` / `stop <name>`| resume / pause a session (container up / down)                  |
+| `weft rm <name>`            | tear down; refuses to lose uncommitted/unpushed work (`--force`)|
+| `weft exec <name> -- <cmd>` | run a command inside the session's container                    |
+| `weft cd <name>`            | print the worktree path — `cd "$(weft cd <name>)"`              |
+| `weft init`                 | scaffold `weft.yaml` (detects the base branch + devcontainer)   |
+| `weft doctor`               | check that dependencies are installed and healthy               |
+| `weft repair`               | reconcile and clean up orphaned worktrees/containers/windows    |
+| `weft version`              | build info (`weft --version` too)                               |
+
+Every command takes `-h/--help`; global flags include `--dry-run`, `-v/-vv`, `--config`, `--no-color`.
+
+## Dashboard
+
+Running `weft` with no arguments opens a live TUI (a pipe or non-TTY falls back to `weft ls`):
+
+| Key            | Action                    |
+| -------------- | ------------------------- |
+| `↑`/`k`, `↓`/`j` | move selection          |
+| `enter`        | attach to the session     |
+| `n`            | new session               |
+| `s` / `S`      | stop / start              |
+| `d`            | delete (confirm)          |
+| `r`            | refresh now               |
+| `?`            | toggle help               |
+| `q`            | quit                      |
+| `esc`          | cancel a prompt or form   |
+
 ## Concepts
 
 A session's identity is a single **name**, stamped into every subsystem so weft never needs
@@ -58,8 +104,10 @@ a database to correlate them:
 | docker    | label `weft.session=<project>/<name>`         |
 
 Because of this, `weft ls` always reflects reality by reconciling live sources — there is no
-authoritative state file to drift. A crash or a manual `docker rm` just shows up as a
-`Partial` session that `weft repair` can clean up.
+authoritative state file to drift. Every session resolves to one of:
+`ready` · `starting` · `stopped` · `partial` · `orphaned`. Stopping or manually removing a
+container shows the session as `stopped` (resume it with `weft start`); manually removing the
+**worktree** leaves an `orphaned` container/window that `weft repair` cleans up.
 
 ## Configuration
 
@@ -95,9 +143,13 @@ make build      # -> ./weft
 make run        # go run ./cmd/weft
 make test       # go test -race ./...
 make lint       # golangci-lint
+make cover-100  # fail unless total coverage is 100% (enforced in CI)
 make doctor     # run the env checks from source
 make help       # list targets
 ```
+
+The test suite is kept at **100% statement coverage** — CI runs `make cover-100`, so new
+code needs tests.
 
 ## License
 

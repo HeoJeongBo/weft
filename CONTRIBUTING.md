@@ -12,20 +12,22 @@ Thanks for your interest! This is a Go CLI; the bar is standard Go tooling and D
 ## Layout
 
 ```
-cmd/weft/         entrypoint (thin)
+cmd/weft/         entrypoint (thin; main -> cli.Execute)
 internal/
-  cli/            cobra command tree (one file per subcommand)
+  cli/            cobra command tree (one file per subcommand); execute.go wraps fang
   engine/         orchestration facade shared by CLI and TUI
-  domain/         pure types
-  config/         weft.yaml load + flag overrides
+  domain/         pure types (sessions, status)
+  config/         weft.yaml load (koanf) + flag overrides
   git/ tmux/ devcontainer/ dockerx/   external-tool wrappers (interface + exec + fake)
   sysexec/        os/exec abstraction (dry-run + fake point)
   tui/            bubbletea dashboard
-  version/        build-time version (ldflag target)
+  paths/ logx/ wefterr/ version/   XDG paths, slog setup, typed errors+exit codes, build version
 ```
 
 Every external-tool wrapper is an interface with a real (`exec`) implementation and a
-`fake` used in tests — the engine depends on interfaces, never on `os/exec` directly.
+`fake` used in tests — the engine depends on interfaces, never on `os/exec` directly. A few
+unexported func-var seams (e.g. `newRunner`, `execCommand`, `newProgram`) let tests inject
+fakes for otherwise-interactive paths.
 
 ## Workflow
 
@@ -34,11 +36,18 @@ make build        # compile
 make test         # go test -race ./...
 make lint         # golangci-lint
 make fmt          # gofumpt -w .
+make cover-100    # enforce 100% total coverage (what CI runs)
 ```
 
 - Keep the code idiomatic; match the surrounding style.
 - Errors should say *what failed, why, and the next step*.
 - `stdout` is for data (and `--json`); logs go to `stderr` (`log/slog`).
+- **Coverage is kept at 100%.** CI runs `make cover-100` (it merges unit-test covdata with a
+  coverage-instrumented binary run so `main()` counts). New code needs tests; see the
+  existing `_test.go` files and `internal/sysexec/fake.go` for the patterns.
+
+A `.devcontainer/` is included: "Reopen in Container" (or `devcontainer up`) gives a ready Go
+toolchain, and mounts your host `~/.claude` so Claude Code is authenticated inside.
 
 ## Commit messages
 
