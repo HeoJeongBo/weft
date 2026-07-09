@@ -52,9 +52,12 @@ type Model struct {
 	cancelCreate context.CancelFunc
 }
 
+// newProgram is a seam so tests can inject bubbletea IO options.
+var newProgram = tea.NewProgram
+
 // Run launches the dashboard.
 func Run(ctx context.Context, e *engine.Engine) error {
-	p := tea.NewProgram(newModel(ctx, e), tea.WithContext(ctx))
+	p := newProgram(newModel(ctx, e), tea.WithContext(ctx))
 	_, err := p.Run()
 	return err
 }

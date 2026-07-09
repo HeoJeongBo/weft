@@ -13,6 +13,9 @@ import (
 	"github.com/HeoJeongBo/weft/internal/wefterr"
 )
 
+// execCommand is a seam so tests can replace the interactive tmux attach.
+var execCommand = exec.CommandContext
+
 func newAttachCmd() *cobra.Command {
 	var start bool
 	cmd := &cobra.Command{
@@ -58,7 +61,7 @@ func attachToSession(ctx context.Context, e *engine.Engine, name string) error {
 		return e.Tmux.SwitchClient(ctx, target)
 	}
 
-	c := exec.CommandContext(ctx, "tmux", tmux.AttachArgs(e.Project.TmuxSession)...)
+	c := execCommand(ctx, "tmux", tmux.AttachArgs(e.Project.TmuxSession)...)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return c.Run()
 }

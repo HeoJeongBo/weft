@@ -20,11 +20,17 @@ type Sources struct {
 	OverridePath string // --config; replaces project discovery when set
 }
 
+// loadDefaults seeds the koanf instance with built-in defaults. It is a seam so
+// tests can exercise the (otherwise unreachable) error path.
+var loadDefaults = func(k *koanf.Koanf) error {
+	return k.Load(structs.Provider(Defaults(), "koanf"), nil)
+}
+
 // Load merges the configuration layers into a single Config.
 func Load(src Sources) (Config, error) {
 	k := koanf.New(".")
 
-	if err := k.Load(structs.Provider(Defaults(), "koanf"), nil); err != nil {
+	if err := loadDefaults(k); err != nil {
 		return Config{}, fmt.Errorf("load defaults: %w", err)
 	}
 

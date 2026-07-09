@@ -57,10 +57,21 @@ func runChecks(ctx context.Context) []checkResult {
 	}
 }
 
+// Seams so doctor's environment probing can be scripted in tests.
+var (
+	lookPath   = exec.LookPath
+	runCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).Output()
+	}
+	runOK = func(ctx context.Context, name string, args ...string) error {
+		return exec.CommandContext(ctx, name, args...).Run()
+	}
+)
+
 // binCheck verifies a binary is on PATH and, if so, records its version output.
 func binCheck(ctx context.Context, bin string, required bool, hint string, verArgs ...string) checkResult {
 	r := checkResult{Name: bin, Required: required, Hint: hint}
-	if _, err := exec.LookPath(bin); err != nil {
+	if _, err := lookPath(bin); err != nil {
 		r.Detail = "not found on PATH"
 		return r
 	}
@@ -69,7 +80,7 @@ func binCheck(ctx context.Context, bin string, required bool, hint string, verAr
 	if len(verArgs) > 0 {
 		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if out, err := exec.CommandContext(cctx, bin, verArgs...).Output(); err == nil {
+		if out, err := runCommand(cctx, bin, verArgs...); err == nil {
 			if v := strings.TrimSpace(firstLine(string(out))); v != "" {
 				r.Detail = v
 			}
@@ -81,13 +92,13 @@ func binCheck(ctx context.Context, bin string, required bool, hint string, verAr
 // dockerDaemonCheck verifies a Docker daemon is reachable.
 func dockerDaemonCheck(ctx context.Context) checkResult {
 	r := checkResult{Name: "docker daemon", Required: true, Hint: "start Docker Desktop / OrbStack / colima"}
-	if _, err := exec.LookPath("docker"); err != nil {
+	if _, err := lookPath("docker"); err != nil {
 		r.Detail = "docker not installed"
 		return r
 	}
 	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	if err := exec.CommandContext(cctx, "docker", "info").Run(); err != nil {
+	if err := runOK(cctx, "docker", "info"); err != nil {
 		r.Detail = "not reachable"
 		return r
 	}

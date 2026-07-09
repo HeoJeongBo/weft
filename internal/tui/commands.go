@@ -39,8 +39,10 @@ func reconcileCmd(ctx context.Context, e *engine.Engine) tea.Cmd {
 	}
 }
 
+func toTickMsg(t time.Time) tea.Msg { return tickMsg(t) }
+
 func tickCmd() tea.Cmd {
-	return tea.Tick(pollInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
+	return tea.Tick(pollInterval, toTickMsg)
 }
 
 func startCreateCmd(ctx context.Context, e *engine.Engine, spec engine.NewSpec) tea.Cmd {
@@ -89,9 +91,12 @@ func attachCmd(ctx context.Context, e *engine.Engine, name string) tea.Cmd {
 
 	if tmux.InTmux() {
 		return func() tea.Msg {
-			return attachDoneMsg{err: e.Tmux.SwitchClient(ctx, target)}
+			return attachResult(e.Tmux.SwitchClient(ctx, target))
 		}
 	}
 	c := exec.CommandContext(ctx, "tmux", tmux.AttachArgs(e.Project.TmuxSession)...)
-	return tea.ExecProcess(c, func(err error) tea.Msg { return attachDoneMsg{err} })
+	return tea.ExecProcess(c, attachResult)
 }
+
+// attachResult maps an attach's error into the message the model expects.
+func attachResult(err error) tea.Msg { return attachDoneMsg{err} }

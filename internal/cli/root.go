@@ -14,6 +14,13 @@ __ __ _____ / _| |_
 \ V  V / -_)  _|  _|
  \_/\_/\___|_|  \__|`
 
+// Seams for testing the root RunE branches without a real terminal or launching
+// the bubbletea program.
+var (
+	isTTY        = isTerminal
+	runDashboard = tui.Run
+)
+
 // NewRootCmd builds the root command with all subcommands attached.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -29,14 +36,14 @@ script the same actions.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// With no arguments, open the dashboard on a TTY; otherwise fall
 			// back to a one-shot `ls` (pipes, CI, `weft | cat`).
-			if !isTerminal(cmd.OutOrStdout()) {
+			if !isTTY(cmd.OutOrStdout()) {
 				return runLs(cmd, false)
 			}
 			e, err := openEngine(cmd)
 			if err != nil {
 				return err
 			}
-			return tui.Run(cmd.Context(), e)
+			return runDashboard(cmd.Context(), e)
 		},
 	}
 

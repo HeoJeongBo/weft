@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -11,13 +12,19 @@ import (
 	"github.com/HeoJeongBo/weft/internal/sysexec"
 )
 
+// newRunner builds the sysexec.Runner used by the command tree. It is a package
+// var so tests can inject a fake runner.
+var newRunner = func(dryRun bool, log *slog.Logger) sysexec.Runner {
+	return sysexec.New(dryRun, log)
+}
+
 // openEngine resolves the current repository into an Engine.
 func openEngine(cmd *cobra.Command) (*engine.Engine, error) {
 	verbosity, _ := cmd.Flags().GetCount("verbose")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	cfgPath, _ := cmd.Flags().GetString("config")
 	log := logx.New(os.Stderr, verbosity, false)
-	r := sysexec.New(dryRun, log)
+	r := newRunner(dryRun, log)
 
 	cwd, err := os.Getwd()
 	if err != nil {

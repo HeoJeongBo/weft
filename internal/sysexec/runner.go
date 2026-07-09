@@ -4,15 +4,12 @@
 package sysexec
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"os/exec"
 	"strings"
-	"sync"
 
 	"github.com/HeoJeongBo/weft/internal/wefterr"
 )
@@ -114,45 +111,56 @@ func (e *Exec) Stream(ctx context.Context, sink func(Line), name string, args ..
 	e.Log.Debug("stream", "cmd", cmdline(name, args))
 
 	cmd := exec.CommandContext(ctx, name, args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return Result{}, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return Result{}, err
-	}
+	outw := &lineWriter{stream: StreamStdout, sink: sink}
+	errw := &lineWriter{stream: StreamStderr, sink: sink}
+	cmd.Stdout = outw
+	cmd.Stderr = errw
+
 	if err := cmd.Start(); err != nil {
 		return Result{}, err
 	}
-
-	var outb, errb bytes.Buffer
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go scan(&wg, stdout, StreamStdout, &outb, sink)
-	go scan(&wg, stderr, StreamStderr, &errb, sink)
-	wg.Wait()
-
 	waitErr := cmd.Wait()
-	res := Result{Stdout: outb.String(), Stderr: errb.String()}
+	outw.flush()
+	errw.flush()
+
+	res := Result{Stdout: outw.buf.String(), Stderr: errw.buf.String()}
 	if waitErr != nil {
 		res.ExitCode = exitCode(waitErr)
-		return res, cmdErr(name, args, res.ExitCode, errb.String(), waitErr)
+		return res, cmdErr(name, args, res.ExitCode, errw.buf.String(), waitErr)
 	}
 	return res, nil
 }
 
-func scan(wg *sync.WaitGroup, r io.Reader, stream StdStream, buf *bytes.Buffer, sink func(Line)) {
-	defer wg.Done()
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		text := sc.Text()
-		buf.WriteString(text)
-		buf.WriteByte('\n')
-		if sink != nil {
-			sink(Line{Stream: stream, Text: text})
+// lineWriter captures all bytes written to it and, when a sink is set, forwards
+// each complete line as it arrives. Used as cmd.Stdout/cmd.Stderr for Stream.
+type lineWriter struct {
+	stream  StdStream
+	sink    func(Line)
+	buf     bytes.Buffer
+	pending []byte
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.buf.Write(p)
+	if w.sink != nil {
+		w.pending = append(w.pending, p...)
+		for {
+			i := bytes.IndexByte(w.pending, '\n')
+			if i < 0 {
+				break
+			}
+			w.sink(Line{Stream: w.stream, Text: string(w.pending[:i])})
+			w.pending = w.pending[i+1:]
 		}
+	}
+	return len(p), nil
+}
+
+// flush emits any trailing partial line (no terminating newline).
+func (w *lineWriter) flush() {
+	if w.sink != nil && len(w.pending) > 0 {
+		w.sink(Line{Stream: w.stream, Text: string(w.pending)})
+		w.pending = nil
 	}
 }
 
