@@ -12,11 +12,14 @@ import (
 	"github.com/HeoJeongBo/weft/internal/sysexec"
 )
 
-// newRunner builds the sysexec.Runner used by the command tree. It is a package
-// var so tests can inject a fake runner.
-var newRunner = func(dryRun bool, log *slog.Logger) sysexec.Runner {
-	return sysexec.New(dryRun, log)
-}
+// newRunner builds the sysexec.Runner used by the command tree, and getwd
+// resolves the working directory. Both are package vars so tests can inject.
+var (
+	newRunner = func(dryRun bool, log *slog.Logger) sysexec.Runner {
+		return sysexec.New(dryRun, log)
+	}
+	getwd = os.Getwd
+)
 
 // openEngine resolves the current repository into an Engine.
 func openEngine(cmd *cobra.Command) (*engine.Engine, error) {
@@ -26,7 +29,7 @@ func openEngine(cmd *cobra.Command) (*engine.Engine, error) {
 	log := logx.New(os.Stderr, verbosity, false)
 	r := newRunner(dryRun, log)
 
-	cwd, err := os.Getwd()
+	cwd, err := getwd()
 	if err != nil {
 		return nil, err
 	}

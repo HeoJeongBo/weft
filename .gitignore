@@ -8,6 +8,9 @@
 # Coverage
 coverage.txt
 coverage.html
+cover.total.out
+/covdata/
+/weft.cov
 
 # Dependencies
 /vendor/

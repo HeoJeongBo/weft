@@ -19,6 +19,8 @@ jobs:
           cache: true
       - run: go vet ./...
       - run: go test -race -covermode=atomic ./...
+      - name: coverage gate (100%)
+        run: make cover-100
 
   lint:
     runs-on: ubuntu-latest

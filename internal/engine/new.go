@@ -150,9 +150,9 @@ func (e *Engine) New(ctx context.Context, spec NewSpec, rawSink Sink) (domain.Se
 	if err != nil {
 		return failed(fmt.Errorf("tmux new-window: %w", err))
 	}
-	rollbacks = append(rollbacks, func(c context.Context) {
-		_ = e.Tmux.KillWindow(c, winID)
-	})
+	// The tmux window is the last mutation; nothing after it can fail, so it
+	// needs no rollback. If a fallible step is ever added below, register a
+	// KillWindow(winID) rollback here.
 
 	// ---- Success ----
 	s := domain.Session{

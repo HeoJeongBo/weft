@@ -38,6 +38,11 @@ cover:
 	go test -race -covermode=atomic -coverprofile=coverage.txt ./...
 	go tool cover -func=coverage.txt | tail -1
 
+## cover-100: fail unless total coverage across all packages is exactly 100%
+.PHONY: cover-100
+cover-100:
+	./scripts/cover-100.sh
+
 ## vet: run go vet
 .PHONY: vet
 vet:

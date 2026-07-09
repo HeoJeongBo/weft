@@ -26,9 +26,11 @@ linters:
   exclusions:
     generated: lax
     rules:
+      # Test code intentionally ignores cleanup errors (Close/Setenv/etc.).
       - path: _test\.go
         linters:
           - bodyclose
+          - errcheck
 
 formatters:
   enable:

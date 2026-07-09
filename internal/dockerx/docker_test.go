@@ -2,6 +2,7 @@ package dockerx
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -88,5 +89,143 @@ func TestDaemonUp(t *testing.T) {
 	}}
 	if !New(f).DaemonUp(context.Background()) {
 		t.Error("want daemon up")
+	}
+}
+
+func TestDaemonDown(t *testing.T) {
+	f := &sysexec.FakeRunner{Handler: func(sysexec.Call) (sysexec.Result, error) {
+		return sysexec.Result{}, errors.New("cannot connect to the docker daemon")
+	}}
+	if New(f).DaemonUp(context.Background()) {
+		t.Error("want daemon down")
+	}
+}
+
+func TestPsError(t *testing.T) {
+	f := &sysexec.FakeRunner{Handler: func(sysexec.Call) (sysexec.Result, error) {
+		return sysexec.Result{}, errors.New("docker down")
+	}}
+	cs, err := New(f).Ps(context.Background(), "weft.project=app")
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if cs != nil {
+		t.Errorf("want nil containers, got %+v", cs)
+	}
+}
+
+// TestStopStart covers Stop and Start: empty ids issue no docker call, and with
+// ids they Mutate the "stop"/"start" argv.
+func TestStopStart(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func(*Exec, context.Context, ...string) error
+		verb string
+	}{
+		{"stop", (*Exec).Stop, "stop"},
+		{"start", (*Exec).Start, "start"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name+" empty ids no call", func(t *testing.T) {
+			f := &sysexec.FakeRunner{}
+			if err := tt.fn(New(f), context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.Calls) != 0 {
+				t.Fatalf("expected no docker call for empty ids, got %d", len(f.Calls))
+			}
+		})
+		t.Run(tt.name+" with ids", func(t *testing.T) {
+			f := &sysexec.FakeRunner{}
+			if err := tt.fn(New(f), context.Background(), "abc", "def"); err != nil {
+				t.Fatal(err)
+			}
+			line := f.LastCall().Line()
+			for _, want := range []string{tt.verb, "abc", "def"} {
+				if !strings.Contains(line, want) {
+					t.Errorf("argv %q missing %q", line, want)
+				}
+			}
+			if f.LastCall().Kind != "mutate" {
+				t.Errorf("%s should Mutate, got %q", tt.name, f.LastCall().Kind)
+			}
+		})
+	}
+}
+
+func TestRemoveByLabelErrors(t *testing.T) {
+	t.Run("ps error", func(t *testing.T) {
+		f := &sysexec.FakeRunner{Handler: func(sysexec.Call) (sysexec.Result, error) {
+			return sysexec.Result{}, errors.New("ps failed")
+		}}
+		n, err := New(f).RemoveByLabel(context.Background(), "weft.session=app/x", true)
+		if err == nil {
+			t.Fatal("want error")
+		}
+		if n != 0 {
+			t.Errorf("want 0 removed, got %d", n)
+		}
+	})
+	t.Run("remove error", func(t *testing.T) {
+		f := &sysexec.FakeRunner{Handler: func(c sysexec.Call) (sysexec.Result, error) {
+			if c.Kind == "run" { // the Ps call
+				return sysexec.Result{Stdout: `{"ID":"abc","Labels":"weft.session=app/x"}`}, nil
+			}
+			return sysexec.Result{}, errors.New("rm failed") // the Remove (Mutate) call
+		}}
+		n, err := New(f).RemoveByLabel(context.Background(), "weft.session=app/x", true)
+		if err == nil {
+			t.Fatal("want error")
+		}
+		if n != 0 {
+			t.Errorf("want 0 removed, got %d", n)
+		}
+	})
+}
+
+// TestParsePsSkipsBlankAndMalformed covers the blank-line and malformed-JSON
+// continue branches in parsePs, plus a container with empty labels.
+func TestParsePsSkipsBlankAndMalformed(t *testing.T) {
+	stdout := strings.Join([]string{
+		"",                        // blank line -> skipped
+		"   ",                     // whitespace-only -> skipped after TrimSpace
+		"{not valid json",         // malformed -> skipped
+		`{"ID":"ok","Labels":""}`, // valid, empty labels
+	}, "\n")
+	cs := parsePs(stdout)
+	if len(cs) != 1 {
+		t.Fatalf("want 1 container, got %d: %+v", len(cs), cs)
+	}
+	if cs[0].ID != "ok" {
+		t.Errorf("ID = %q, want ok", cs[0].ID)
+	}
+	if len(cs[0].Labels) != 0 {
+		t.Errorf("want empty labels map, got %+v", cs[0].Labels)
+	}
+}
+
+func TestParseLabels(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want map[string]string
+	}{
+		{"empty", "", map[string]string{}},
+		{"single", "k=v", map[string]string{"k": "v"}},
+		{"multi", "a=1,b=2", map[string]string{"a": "1", "b": "2"}},
+		{"trailing comma and spaces", "a=1, b=2, ", map[string]string{"a": "1", "b": "2"}},
+		{"no value", "flag", map[string]string{"flag": ""}},
+	}
+	for _, tt := range tests {
+		got := parseLabels(tt.in)
+		if len(got) != len(tt.want) {
+			t.Errorf("%s: len = %d, want %d (%+v)", tt.name, len(got), len(tt.want), got)
+			continue
+		}
+		for k, v := range tt.want {
+			if got[k] != v {
+				t.Errorf("%s: [%q] = %q, want %q", tt.name, k, got[k], v)
+			}
+		}
 	}
 }
