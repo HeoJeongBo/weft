@@ -70,6 +70,24 @@ See [`weft.yaml.example`](./weft.yaml.example).
 > the main repository's `.git/worktrees/<name>`. The devcontainer must be able to see that
 > path for git to work inside the container. See the config comments and CONTRIBUTING.
 
+## Without a devcontainer
+
+The devcontainer is optional. Set `devcontainer.enabled: false` in `weft.yaml` (this is what
+`weft init` writes when the repo has no `.devcontainer/`) and weft becomes a plain
+**worktree + tmux + claude** orchestrator — no Docker required:
+
+```sh
+weft new feat-auth          # git worktree + tmux window running claude on the host
+weft ls                     # the session shows Ready (no container involved)
+weft attach feat-auth       # CLI attach to its tmux window (switch-client inside
+                            # tmux, or a blocking `tmux attach` outside)
+weft rm feat-auth
+```
+
+You can also skip the container for a single session on a devcontainer-enabled project with
+`weft new <name> --no-devcontainer`. In tmux-only mode a session's readiness is driven by its
+live tmux window rather than a container.
+
 ## Development
 
 ```sh

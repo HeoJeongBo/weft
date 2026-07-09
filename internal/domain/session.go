@@ -83,9 +83,11 @@ type Session struct {
 func (s *Session) Key() string { return SessionKey(s.Project, s.Name) }
 
 // DeriveStatus computes Status and Claude from the currently-populated pieces.
-// claudeCmds are the process names that count as a live claude (e.g. "claude",
-// "node").
-func (s *Session) DeriveStatus(claudeCmds ...string) {
+// devcontainerExpected reports whether this session is supposed to have a
+// container (project/session config): when false, a live tmux window alone means
+// the session is Ready. claudeCmds are the process names that count as a live
+// claude (e.g. "claude", "node").
+func (s *Session) DeriveStatus(devcontainerExpected bool, claudeCmds ...string) {
 	s.Claude = deriveClaude(s.Window, claudeCmds)
 
 	hasWT := s.Worktree != nil
@@ -96,6 +98,14 @@ func (s *Session) DeriveStatus(claudeCmds ...string) {
 	case !hasWT:
 		// A container or window with no worktree is an orphan to clean up.
 		s.Status = StatusOrphaned
+	case !devcontainerExpected:
+		// tmux-only session: the container is irrelevant. A live window is Ready;
+		// otherwise the worktree remains but the session isn't running.
+		if hasWin {
+			s.Status = StatusReady
+		} else {
+			s.Status = StatusStopped
+		}
 	case hasWin && running:
 		s.Status = StatusReady
 	case s.Container != nil && !running && (s.Container.State == "created" || s.Container.State == "restarting"):

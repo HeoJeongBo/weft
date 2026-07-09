@@ -165,7 +165,7 @@ func (e *Engine) New(ctx context.Context, spec NewSpec, rawSink Sink) (domain.Se
 		Container: container,
 		Window:    &domain.Window{ID: winID, Name: spec.Name},
 	}
-	s.DeriveStatus(e.Cfg.ClaudeProcessNames()...)
+	s.DeriveStatus(dcEnabled, e.Cfg.ClaudeProcessNames()...)
 	sink.done(s)
 	return s, nil
 }

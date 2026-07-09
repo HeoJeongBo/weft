@@ -44,21 +44,27 @@ func TestDeriveStatus(t *testing.T) {
 	tests := []struct {
 		name   string
 		s      Session
+		dc     bool // devcontainer expected
 		want   SessionStatus
 		claude ClaudeState
 	}{
-		{"ready", Session{Worktree: wt, Container: running, Window: win()}, StatusReady, ClaudeRunning},
-		{"starting", Session{Worktree: wt, Container: created, Window: win()}, StatusStarting, ClaudeRunning},
-		{"stopped-exited", Session{Worktree: wt, Container: exited, Window: win()}, StatusStopped, ClaudeRunning},
-		{"stopped-nocontainer", Session{Worktree: wt, Window: win()}, StatusStopped, ClaudeRunning},
-		{"partial", Session{Worktree: wt}, StatusPartial, ClaudeNone},
-		{"orphaned", Session{Container: running}, StatusOrphaned, ClaudeNone},
-		{"dead-window", Session{Worktree: wt, Container: running, Window: &Window{PaneDead: true, PaneCommand: "claude"}}, StatusStopped, ClaudeDead},
-		{"idle-claude", Session{Worktree: wt, Container: running, Window: &Window{PaneCommand: "bash"}}, StatusReady, ClaudeIdle},
+		// Devcontainer-backed sessions: container state drives status.
+		{"ready", Session{Worktree: wt, Container: running, Window: win()}, true, StatusReady, ClaudeRunning},
+		{"starting", Session{Worktree: wt, Container: created, Window: win()}, true, StatusStarting, ClaudeRunning},
+		{"stopped-exited", Session{Worktree: wt, Container: exited, Window: win()}, true, StatusStopped, ClaudeRunning},
+		{"stopped-nocontainer", Session{Worktree: wt, Window: win()}, true, StatusStopped, ClaudeRunning},
+		{"partial", Session{Worktree: wt}, true, StatusPartial, ClaudeNone},
+		{"orphaned", Session{Container: running}, true, StatusOrphaned, ClaudeNone},
+		{"dead-window", Session{Worktree: wt, Container: running, Window: &Window{PaneDead: true, PaneCommand: "claude"}}, true, StatusStopped, ClaudeDead},
+		{"idle-claude", Session{Worktree: wt, Container: running, Window: &Window{PaneCommand: "bash"}}, true, StatusReady, ClaudeIdle},
+		// tmux-only sessions (no devcontainer expected): a live window is Ready.
+		{"nodc-ready", Session{Worktree: wt, Window: win()}, false, StatusReady, ClaudeRunning},
+		{"nodc-stopped", Session{Worktree: wt}, false, StatusStopped, ClaudeNone},
+		{"nodc-orphan", Session{Container: running}, false, StatusOrphaned, ClaudeNone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.s.DeriveStatus("claude", "node")
+			tt.s.DeriveStatus(tt.dc, "claude", "node")
 			if tt.s.Status != tt.want {
 				t.Errorf("Status = %q, want %q", tt.s.Status, tt.want)
 			}

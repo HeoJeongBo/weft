@@ -81,6 +81,7 @@ func (e *Engine) Reconcile(ctx context.Context) ([]domain.Session, error) {
 		winByName[w.Name] = w
 	}
 	claudeCmds := e.Cfg.ClaudeProcessNames()
+	dcExpected := e.Cfg.Devcontainer.Enabled
 	for name, s := range byName {
 		if w, ok := winByName[name]; ok {
 			s.Window = &domain.Window{
@@ -93,7 +94,7 @@ func (e *Engine) Reconcile(ctx context.Context) ([]domain.Session, error) {
 				Activity:    w.Activity,
 			}
 		}
-		s.DeriveStatus(claudeCmds...)
+		s.DeriveStatus(dcExpected, claudeCmds...)
 	}
 
 	out := make([]domain.Session, 0, len(byName))
