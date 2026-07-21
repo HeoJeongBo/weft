@@ -606,6 +606,7 @@ func TestThemeStatus(t *testing.T) {
 	statuses := []domain.SessionStatus{
 		domain.StatusReady,
 		domain.StatusStarting,
+		domain.StatusDetached,
 		domain.StatusStopped,
 		domain.StatusPartial,
 		domain.StatusOrphaned,
@@ -627,6 +628,7 @@ func TestThemeStatus(t *testing.T) {
 	wantGlyph := map[domain.SessionStatus]string{
 		domain.StatusReady:    "●",
 		domain.StatusStarting: "◐",
+		domain.StatusDetached: "◒",
 		domain.StatusStopped:  "○",
 		domain.StatusPartial:  "◑",
 		domain.StatusOrphaned: "✕",

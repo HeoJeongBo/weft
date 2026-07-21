@@ -58,7 +58,7 @@ func (e *Engine) New(ctx context.Context, spec NewSpec, rawSink Sink) (domain.Se
 	dcEnabled := e.Cfg.Devcontainer.Enabled && !spec.NoDevcontainer
 
 	if dcEnabled {
-		cfgFile := filepath.Join(e.Project.Root, e.Cfg.Devcontainer.Config)
+		cfgFile := e.dcConfigPath()
 		if !paths.Exists(cfgFile) {
 			err := fmt.Errorf("%w at %s (use --no-devcontainer)", wefterr.ErrDevcontainerMissing, e.Cfg.Devcontainer.Config)
 			sink.fail(err)
@@ -112,11 +112,19 @@ func (e *Engine) New(ctx context.Context, spec NewSpec, rawSink Sink) (domain.Se
 	if dcEnabled {
 		sink.step("devcontainer up")
 		label := e.sessionLabel(spec.Name)
+		// Only `new` stamps the enrichment labels; `up` from Start passes just the
+		// identity pair, which still matches this container (label filters are
+		// subset matches) and cannot know created_at.
+		idLabels := append(e.idLabels(spec.Name),
+			"weft.branch="+branch,
+			"weft.base_ref="+base,
+			"weft.created_at="+time.Now().UTC().Format(time.RFC3339),
+		)
 		up, err := e.DC.Up(ctx, func(l sysexec.Line) { sink.log(l.Text) }, devcontainer.UpOpts{
 			WorkspaceFolder: wtPath,
-			ConfigPath:      e.Cfg.Devcontainer.Config,
-			IDLabels:        []string{"weft.session=" + label, "weft.project=" + e.Project.Slug},
-			ExtraArgs:       e.Cfg.Devcontainer.UpArgs,
+			ConfigPath:      e.dcConfigPath(),
+			IDLabels:        idLabels,
+			ExtraArgs:       e.upExtraArgs(),
 		})
 		if err != nil {
 			return failed(err)
@@ -130,12 +138,13 @@ func (e *Engine) New(ctx context.Context, spec NewSpec, rawSink Sink) (domain.Se
 		rollbacks = append(rollbacks, func(c context.Context) {
 			_, _ = e.Docker.RemoveByLabel(c, "weft.session="+label, true)
 		})
+		e.setupGitSafe(ctx, spec.Name, wtPath, up.RemoteWorkspaceFolder, sink)
 	}
 
 	// 3. post_create hooks.
 	for _, h := range e.Cfg.Hooks.PostCreate {
 		sink.step("hook: " + h)
-		if err := e.runHook(ctx, wtPath, dcEnabled, h); err != nil {
+		if err := e.runHook(ctx, spec.Name, wtPath, dcEnabled, h); err != nil {
 			return failed(fmt.Errorf("post_create hook %q: %w", h, err))
 		}
 	}
@@ -177,12 +186,30 @@ func (e *Engine) launchCommand(spec NewSpec, wtPath string, dcEnabled bool) []st
 	}
 	claudeCmd := append([]string{e.Cfg.Claude.Command}, e.Cfg.Claude.Args...)
 	if dcEnabled && e.Cfg.Claude.ExecInContainer {
-		return devcontainer.ExecArgs(devcontainer.ExecOpts{
-			WorkspaceFolder: wtPath,
-			ConfigPath:      e.Cfg.Devcontainer.Config,
-		}, claudeCmd...)
+		return devcontainer.ExecArgs(e.execOpts(spec.Name, wtPath), claudeCmd...)
 	}
 	return claudeCmd
+}
+
+// setupGitSafe marks the workspace and the mounted repo path as safe.directory
+// inside the container: bind mounts keep host file ownership, which git
+// otherwise rejects as "dubious ownership". Best-effort — a container without
+// git is fine — and skipped when the mount is disabled or under dry-run (no
+// remote workspace to exec into).
+func (e *Engine) setupGitSafe(ctx context.Context, name, wtPath, remoteWS string, sink Sink) {
+	if !e.Cfg.Devcontainer.MountGit || remoteWS == "" {
+		return
+	}
+	sink.step("git safe.directory")
+	script := ""
+	for _, dir := range []string{remoteWS, e.Project.Root} {
+		q := singleQuote(dir)
+		script += "git config --global --get-all safe.directory 2>/dev/null | grep -qxF " + q +
+			" || git config --global --add safe.directory " + q + "; "
+	}
+	if _, err := e.DC.Exec(ctx, e.execOpts(name, wtPath), "sh", "-lc", script); err != nil {
+		sink.log(fmt.Sprintf("git safe.directory setup failed (continuing): %v", err))
+	}
 }
 
 // ensureTmuxSession creates the project's tmux session if it does not exist.
@@ -197,14 +224,11 @@ func (e *Engine) ensureTmuxSession(ctx context.Context) error {
 	return e.Tmux.NewSession(ctx, e.Project.TmuxSession, e.Project.Root)
 }
 
-// runHook runs a hook command, in the container when devcontainer is enabled,
-// otherwise on the host in the worktree.
-func (e *Engine) runHook(ctx context.Context, wtPath string, inContainer bool, hook string) error {
+// runHook runs a hook command, in the named session's container when
+// devcontainer is enabled, otherwise on the host in the worktree.
+func (e *Engine) runHook(ctx context.Context, name, wtPath string, inContainer bool, hook string) error {
 	if inContainer {
-		_, err := e.DC.Exec(ctx, devcontainer.ExecOpts{
-			WorkspaceFolder: wtPath,
-			ConfigPath:      e.Cfg.Devcontainer.Config,
-		}, "sh", "-lc", hook)
+		_, err := e.DC.Exec(ctx, e.execOpts(name, wtPath), "sh", "-lc", hook)
 		return err
 	}
 	_, err := e.Runner.Mutate(ctx, "sh", "-c", "cd "+singleQuote(wtPath)+" && "+hook)

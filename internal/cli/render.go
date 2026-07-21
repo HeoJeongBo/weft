@@ -38,6 +38,8 @@ func statusGlyph(s domain.SessionStatus) (glyph, code string) {
 		return "●", ansiGreen
 	case domain.StatusStarting:
 		return "◐", ansiYellow
+	case domain.StatusDetached:
+		return "◒", ansiYellow
 	case domain.StatusStopped:
 		return "○", ansiDim
 	case domain.StatusPartial:

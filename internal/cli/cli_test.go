@@ -1162,9 +1162,9 @@ func TestPrintJSON(t *testing.T) {
 
 func TestStatusGlyphAndBadge(t *testing.T) {
 	cases := []domain.SessionStatus{
-		domain.StatusReady, domain.StatusStarting, domain.StatusStopped,
-		domain.StatusPartial, domain.StatusOrphaned, domain.StatusUnknown,
-		domain.SessionStatus("weird"),
+		domain.StatusReady, domain.StatusStarting, domain.StatusDetached,
+		domain.StatusStopped, domain.StatusPartial, domain.StatusOrphaned,
+		domain.StatusUnknown, domain.SessionStatus("weird"),
 	}
 	for _, s := range cases {
 		g, code := statusGlyph(s)

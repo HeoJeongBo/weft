@@ -11,6 +11,7 @@ type SessionStatus string
 const (
 	StatusReady    SessionStatus = "ready"    // worktree + window + running container
 	StatusStarting SessionStatus = "starting" // container created/restarting, not yet running
+	StatusDetached SessionStatus = "detached" // container running but window missing/dead
 	StatusStopped  SessionStatus = "stopped"  // worktree present, container down/absent
 	StatusPartial  SessionStatus = "partial"  // worktree present but window & container missing
 	StatusOrphaned SessionStatus = "orphaned" // container/window with no worktree
@@ -108,7 +109,10 @@ func (s *Session) DeriveStatus(devcontainerExpected bool, claudeCmds ...string) 
 		}
 	case hasWin && running:
 		s.Status = StatusReady
-	case s.Container != nil && !running && (s.Container.State == "created" || s.Container.State == "restarting"):
+	case running:
+		// Container is up but its window is gone — `weft start` recreates it.
+		s.Status = StatusDetached
+	case s.Container != nil && (s.Container.State == "created" || s.Container.State == "restarting"):
 		s.Status = StatusStarting
 	case hasWin || s.Container != nil:
 		// Worktree plus at least one of window/container, but not running.

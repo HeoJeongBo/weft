@@ -458,6 +458,13 @@ func TestExec(t *testing.T) {
 		if !strings.Contains(last, "devcontainer exec") || !strings.Contains(last, "ls -la") {
 			t.Errorf("exec argv = %q", last)
 		}
+		if !strings.Contains(last, "--id-label weft.session=app/feat-auth") ||
+			!strings.Contains(last, "--id-label weft.project=app") {
+			t.Errorf("exec argv missing id-labels: %q", last)
+		}
+		if !strings.Contains(last, "--config /repo/.devcontainer/devcontainer.json") {
+			t.Errorf("exec argv config not absolute: %q", last)
+		}
 	})
 
 	t.Run("host fallback", func(t *testing.T) {
@@ -590,18 +597,21 @@ func TestRepair(t *testing.T) {
 func TestRunHook(t *testing.T) {
 	t.Run("in container uses devcontainer exec", func(t *testing.T) {
 		e := testEngine(reconcileHandler)
-		if err := e.runHook(context.Background(), "/wt/x", true, "echo hi"); err != nil {
+		if err := e.runHook(context.Background(), "x", "/wt/x", true, "echo hi"); err != nil {
 			t.Fatal(err)
 		}
 		last := e.Runner.(*sysexec.FakeRunner).LastCall().Line()
 		if !strings.Contains(last, "devcontainer exec") || !strings.Contains(last, "sh -lc echo hi") {
 			t.Errorf("hook argv = %q", last)
 		}
+		if !strings.Contains(last, "--id-label weft.session=app/x") {
+			t.Errorf("hook argv missing id-label: %q", last)
+		}
 	})
 
 	t.Run("on host uses sh -c cd", func(t *testing.T) {
 		e := testEngine(reconcileHandler)
-		if err := e.runHook(context.Background(), "/wt/x", false, "echo hi"); err != nil {
+		if err := e.runHook(context.Background(), "x", "/wt/x", false, "echo hi"); err != nil {
 			t.Fatal(err)
 		}
 		last := e.Runner.(*sysexec.FakeRunner).LastCall()
@@ -610,6 +620,90 @@ func TestRunHook(t *testing.T) {
 		}
 		if last.Args[1] != "cd '/wt/x' && echo hi" {
 			t.Errorf("host hook script = %q", last.Args[1])
+		}
+	})
+}
+
+// -------------------- devcontainer identity & git helpers --------------------
+
+func TestDCConfigPath(t *testing.T) {
+	e := testEngine(reconcileHandler)
+	if got := e.dcConfigPath(); got != "/repo/.devcontainer/devcontainer.json" {
+		t.Errorf("relative = %q", got)
+	}
+	e.Cfg.Devcontainer.Config = "/abs/devcontainer.json"
+	if got := e.dcConfigPath(); got != "/abs/devcontainer.json" {
+		t.Errorf("absolute = %q", got)
+	}
+	e.Cfg.Devcontainer.Config = ""
+	if got := e.dcConfigPath(); got != "" {
+		t.Errorf("empty = %q", got)
+	}
+}
+
+func TestUpExtraArgs(t *testing.T) {
+	e := testEngine(reconcileHandler)
+	e.Cfg.Devcontainer.UpArgs = []string{"--cache-from", "img"}
+	got := strings.Join(e.upExtraArgs(), " ")
+	if !strings.Contains(got, "--mount type=bind,source=/repo/.git,target=/repo/.git") {
+		t.Errorf("missing git mount: %q", got)
+	}
+	if !strings.HasSuffix(got, "--cache-from img") {
+		t.Errorf("user up_args not last: %q", got)
+	}
+	e.Cfg.Devcontainer.MountGit = false
+	if got := strings.Join(e.upExtraArgs(), " "); strings.Contains(got, "--mount") {
+		t.Errorf("mount present despite mount_git=false: %q", got)
+	}
+}
+
+func TestSetupGitSafe(t *testing.T) {
+	t.Run("registers workspace and repo paths in container", func(t *testing.T) {
+		e := testEngine(reconcileHandler)
+		var events []Event
+		e.setupGitSafe(context.Background(), "x", "/wt/x", "/workspaces/x", func(ev Event) { events = append(events, ev) })
+		last := e.Runner.(*sysexec.FakeRunner).LastCall().Line()
+		for _, want := range []string{
+			"devcontainer exec",
+			"--id-label weft.session=app/x",
+			"safe.directory '/workspaces/x'",
+			"safe.directory '/repo'",
+		} {
+			if !strings.Contains(last, want) {
+				t.Errorf("argv %q missing %q", last, want)
+			}
+		}
+		if len(events) != 1 || events[0].Kind != EventStep {
+			t.Errorf("events = %+v", events)
+		}
+	})
+
+	t.Run("exec failure logs and continues", func(t *testing.T) {
+		h := func(c sysexec.Call) (sysexec.Result, error) {
+			if strings.Contains(c.Line(), "devcontainer exec") {
+				return sysexec.Result{ExitCode: 1}, cmdErr(c, 1)
+			}
+			return reconcileHandler(c)
+		}
+		e := testEngine(h)
+		var logs []string
+		e.setupGitSafe(context.Background(), "x", "/wt/x", "/workspaces/x", func(ev Event) {
+			if ev.Kind == EventLog {
+				logs = append(logs, ev.Text)
+			}
+		})
+		if len(logs) != 1 || !strings.Contains(logs[0], "continuing") {
+			t.Errorf("logs = %v", logs)
+		}
+	})
+
+	t.Run("skipped without mount_git or remote workspace", func(t *testing.T) {
+		e := testEngine(reconcileHandler)
+		e.setupGitSafe(context.Background(), "x", "/wt/x", "", nil)
+		e.Cfg.Devcontainer.MountGit = false
+		e.setupGitSafe(context.Background(), "x", "/wt/x", "/workspaces/x", nil)
+		if n := len(e.Runner.(*sysexec.FakeRunner).Calls); n != 0 {
+			t.Errorf("want no calls, got %d", n)
 		}
 	})
 }

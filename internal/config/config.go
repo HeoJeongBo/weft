@@ -39,9 +39,10 @@ type WorktreeCfg struct {
 
 // DevcontainerCfg configures devcontainer usage.
 type DevcontainerCfg struct {
-	Enabled bool     `koanf:"enabled"`
-	Config  string   `koanf:"config"`
-	UpArgs  []string `koanf:"up_args"`
+	Enabled  bool     `koanf:"enabled"`
+	Config   string   `koanf:"config"`
+	MountGit bool     `koanf:"mount_git"`
+	UpArgs   []string `koanf:"up_args"`
 }
 
 // TmuxCfg configures tmux session/window naming.
@@ -79,8 +80,9 @@ func Defaults() Config {
 			Root: "~/.weft/worktrees/{project}",
 		},
 		Devcontainer: DevcontainerCfg{
-			Enabled: true,
-			Config:  ".devcontainer/devcontainer.json",
+			Enabled:  true,
+			Config:   ".devcontainer/devcontainer.json",
+			MountGit: true,
 		},
 		Tmux: TmuxCfg{
 			Session: "weft/{project}",

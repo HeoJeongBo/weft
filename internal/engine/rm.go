@@ -41,7 +41,7 @@ func (e *Engine) Remove(ctx context.Context, spec RemoveSpec, sink Sink) error {
 
 	for _, h := range e.Cfg.Hooks.PreRemove {
 		sink.step("hook: " + h)
-		if err := e.runHook(ctx, worktreePathOf(s), s.Container != nil, h); err != nil {
+		if err := e.runHook(ctx, spec.Name, worktreePathOf(s), s.Container != nil, h); err != nil {
 			sink.log(fmt.Sprintf("pre_remove hook failed (continuing): %v", err))
 		}
 	}
@@ -82,7 +82,7 @@ func (e *Engine) Remove(ctx context.Context, spec RemoveSpec, sink Sink) error {
 
 	for _, h := range e.Cfg.Hooks.PostRemove {
 		sink.step("hook: " + h)
-		if err := e.runHook(ctx, e.Project.Root, false, h); err != nil {
+		if err := e.runHook(ctx, spec.Name, e.Project.Root, false, h); err != nil {
 			sink.log(fmt.Sprintf("post_remove hook failed (continuing): %v", err))
 		}
 	}

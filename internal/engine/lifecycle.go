@@ -51,16 +51,17 @@ func (e *Engine) Start(ctx context.Context, name string, noClaude bool, sink Sin
 
 	if dcEnabled {
 		sink.step("devcontainer up")
-		label := e.sessionLabel(name)
-		if _, err := e.DC.Up(ctx, func(l sysexec.Line) { sink.log(l.Text) }, devcontainer.UpOpts{
+		up, err := e.DC.Up(ctx, func(l sysexec.Line) { sink.log(l.Text) }, devcontainer.UpOpts{
 			WorkspaceFolder: wtPath,
-			ConfigPath:      e.Cfg.Devcontainer.Config,
-			IDLabels:        []string{"weft.session=" + label, "weft.project=" + e.Project.Slug},
-			ExtraArgs:       e.Cfg.Devcontainer.UpArgs,
-		}); err != nil {
+			ConfigPath:      e.dcConfigPath(),
+			IDLabels:        e.idLabels(name),
+			ExtraArgs:       e.upExtraArgs(),
+		})
+		if err != nil {
 			sink.fail(err)
 			return err
 		}
+		e.setupGitSafe(ctx, name, wtPath, up.RemoteWorkspaceFolder, sink)
 	}
 
 	if s.Window == nil {
@@ -93,10 +94,7 @@ func (e *Engine) Exec(ctx context.Context, name string, cmd ...string) (sysexec.
 		return sysexec.Result{}, fmt.Errorf("session %s has no worktree", name)
 	}
 	if s.Container != nil {
-		return e.DC.Exec(ctx, devcontainer.ExecOpts{
-			WorkspaceFolder: s.Worktree.Path,
-			ConfigPath:      e.Cfg.Devcontainer.Config,
-		}, cmd...)
+		return e.DC.Exec(ctx, e.execOpts(name, s.Worktree.Path), cmd...)
 	}
 	// Host fallback.
 	script := "cd " + singleQuote(s.Worktree.Path) + " && " + shellJoin(cmd)

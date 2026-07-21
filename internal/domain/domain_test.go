@@ -55,7 +55,8 @@ func TestDeriveStatus(t *testing.T) {
 		{"stopped-nocontainer", Session{Worktree: wt, Window: win()}, true, StatusStopped, ClaudeRunning},
 		{"partial", Session{Worktree: wt}, true, StatusPartial, ClaudeNone},
 		{"orphaned", Session{Container: running}, true, StatusOrphaned, ClaudeNone},
-		{"dead-window", Session{Worktree: wt, Container: running, Window: &Window{PaneDead: true, PaneCommand: "claude"}}, true, StatusStopped, ClaudeDead},
+		{"dead-window", Session{Worktree: wt, Container: running, Window: &Window{PaneDead: true, PaneCommand: "claude"}}, true, StatusDetached, ClaudeDead},
+		{"detached-no-window", Session{Worktree: wt, Container: running}, true, StatusDetached, ClaudeNone},
 		{"idle-claude", Session{Worktree: wt, Container: running, Window: &Window{PaneCommand: "bash"}}, true, StatusReady, ClaudeIdle},
 		// tmux-only sessions (no devcontainer expected): a live window is Ready.
 		{"nodc-ready", Session{Worktree: wt, Window: win()}, false, StatusReady, ClaudeRunning},

@@ -106,6 +106,28 @@ func TestNewSagaSuccess(t *testing.T) {
 			t.Errorf("steps %q missing %q", joined, want)
 		}
 	}
+
+	var upLine string
+	for _, c := range f.Calls {
+		if l := c.Line(); strings.Contains(l, "devcontainer up") {
+			upLine = l
+			break
+		}
+	}
+	gitDir := filepath.Join(e.Project.Root, ".git")
+	for _, want := range []string{
+		"--config " + filepath.Join(e.Project.Root, ".devcontainer/devcontainer.json"),
+		"--id-label weft.session=app/feat",
+		"--id-label weft.project=app",
+		"--id-label weft.branch=weft/feat",
+		"--id-label weft.base_ref=main",
+		"--id-label weft.created_at=",
+		"--mount type=bind,source=" + gitDir + ",target=" + gitDir,
+	} {
+		if !strings.Contains(upLine, want) {
+			t.Errorf("up argv %q missing %q", upLine, want)
+		}
+	}
 }
 
 func TestNewSagaRollsBackOnUpFailure(t *testing.T) {

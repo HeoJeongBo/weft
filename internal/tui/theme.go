@@ -54,7 +54,7 @@ func (t theme) statusColor(s domain.SessionStatus) color.Color {
 	switch s {
 	case domain.StatusReady:
 		return t.success
-	case domain.StatusStarting, domain.StatusPartial:
+	case domain.StatusStarting, domain.StatusDetached, domain.StatusPartial:
 		return t.warn
 	case domain.StatusOrphaned:
 		return t.danger
@@ -70,6 +70,8 @@ func statusGlyph(s domain.SessionStatus) string {
 		return "●"
 	case domain.StatusStarting:
 		return "◐"
+	case domain.StatusDetached:
+		return "◒"
 	case domain.StatusStopped:
 		return "○"
 	case domain.StatusPartial:

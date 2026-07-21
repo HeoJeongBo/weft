@@ -22,6 +22,10 @@ worktree:
 devcontainer:
   enabled: true
   config: ".devcontainer/devcontainer.json"
+  # Bind-mount the repository's .git directory into the container (at its host
+  # path) and register it as a git safe.directory, so git works inside session
+  # worktrees. Disable if the container must not see the host repo's history.
+  mount_git: true
   # Extra flags passed through to `devcontainer up`.
   up_args: []
 

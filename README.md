@@ -105,9 +105,10 @@ a database to correlate them:
 
 Because of this, `weft ls` always reflects reality by reconciling live sources — there is no
 authoritative state file to drift. Every session resolves to one of:
-`ready` · `starting` · `stopped` · `partial` · `orphaned`. Stopping or manually removing a
-container shows the session as `stopped` (resume it with `weft start`); manually removing the
-**worktree** leaves an `orphaned` container/window that `weft repair` cleans up.
+`ready` · `starting` · `detached` · `stopped` · `partial` · `orphaned`. Stopping or manually
+removing a container shows the session as `stopped`; a running container whose tmux window is
+gone shows as `detached` (both resume with `weft start`); manually removing the **worktree**
+leaves an `orphaned` container/window that `weft repair` cleans up.
 
 ## Configuration
 
@@ -115,8 +116,9 @@ container shows the session as `stopped` (resume it with `weft start`); manually
 See [`weft.yaml.example`](./weft.yaml.example).
 
 > **Note on devcontainers + worktrees:** a worktree's `.git` is a *file* pointing back into
-> the main repository's `.git/worktrees/<name>`. The devcontainer must be able to see that
-> path for git to work inside the container. See the config comments and CONTRIBUTING.
+> the main repository's `.git/worktrees/<name>`. So that git works inside the container,
+> weft bind-mounts the repo's `.git` directory at its host path and registers it as a git
+> `safe.directory`. Opt out with `devcontainer.mount_git: false`.
 
 ## Without a devcontainer
 

@@ -100,3 +100,44 @@ func (e *Engine) branchName(name string) string {
 func (e *Engine) sessionLabel(name string) string {
 	return domain.SessionKey(e.Project.Slug, name)
 }
+
+// idLabels returns the labels identifying a session's container. Custom
+// --id-label values replace the devcontainer CLI's default identity labels, so
+// `exec` must pass the same set as `up` or it cannot find the container.
+func (e *Engine) idLabels(name string) []string {
+	return []string{"weft.session=" + e.sessionLabel(name), "weft.project=" + e.Project.Slug}
+}
+
+// dcConfigPath returns the devcontainer config path resolved against the
+// project root, so it does not depend on the process working directory.
+func (e *Engine) dcConfigPath() string {
+	cfg := e.Cfg.Devcontainer.Config
+	if cfg == "" || filepath.IsAbs(cfg) {
+		return cfg
+	}
+	return filepath.Join(e.Project.Root, cfg)
+}
+
+// execOpts identifies a session's container for `devcontainer exec`.
+func (e *Engine) execOpts(name, wtPath string) devcontainer.ExecOpts {
+	return devcontainer.ExecOpts{
+		WorkspaceFolder: wtPath,
+		ConfigPath:      e.dcConfigPath(),
+		IDLabels:        e.idLabels(name),
+	}
+}
+
+// upExtraArgs builds the passthrough args for `devcontainer up`: the repo .git
+// mount (when enabled) followed by the user's configured up_args. The .git
+// directory is mounted at its host path so the worktree's gitdir pointer
+// resolves inside the container. (If the repo's .git is itself a file — the
+// repo is a worktree or submodule — the mount still binds but the chain may
+// point outside the container.)
+func (e *Engine) upExtraArgs() []string {
+	var args []string
+	if e.Cfg.Devcontainer.MountGit {
+		gitDir := filepath.Join(e.Project.Root, ".git")
+		args = append(args, "--mount", "type=bind,source="+gitDir+",target="+gitDir)
+	}
+	return append(args, e.Cfg.Devcontainer.UpArgs...)
+}
