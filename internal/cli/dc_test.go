@@ -113,7 +113,9 @@ func TestDcDryRun(t *testing.T) {
 		for _, want := range []string{
 			"devcontainer exec --workspace-folder /u/client2/holiday",
 			"--config /u/client2/holiday/.devcontainer/oasys-ui/devcontainer.json",
-			"claude --continue || claude ||",
+			`PATH="$HOME/.local/bin:$PATH"`,
+			"command -v claude",
+			"claude --continue || claude",
 			"exec zsh -l",
 		} {
 			if !strings.Contains(out, want) {
@@ -165,7 +167,7 @@ func TestDcAttachCreatesWindow(t *testing.T) {
 		t.Errorf("new-session = %q", l)
 	}
 	nw := recorded(lines, "new-window")
-	for _, want := range []string{"weft/dc:", "-n oasys-ui", "claude --continue || claude ||", "--workspace-folder /u/client2/holiday"} {
+	for _, want := range []string{"weft/dc:", "-n oasys-ui", "claude --continue || claude", "--workspace-folder /u/client2/holiday"} {
 		if !strings.Contains(nw, want) {
 			t.Errorf("new-window missing %q: %q", want, nw)
 		}

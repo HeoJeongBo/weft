@@ -29,8 +29,15 @@ const dcTmuxSession = "weft/dc"
 const dcShellFallback = `exec zsh -l 2>/dev/null || exec bash -l 2>/dev/null || exec sh -l`
 
 // dcClaudeChain resumes the container's last claude conversation, falls back
-// to a fresh claude, and to a plain shell when claude is not installed.
-const dcClaudeChain = `claude --continue || claude || ` + dcShellFallback
+// to a fresh claude, and to a plain shell (with an install hint) when claude
+// is not installed. ~/.local/bin is prepended because the native installer
+// puts claude there but only teaches interactive shells about it.
+const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
+	`if command -v claude >/dev/null 2>&1; then claude --continue || claude; else ` +
+	`echo "weft: claude is not installed in this container."; ` +
+	`echo "  install it with: curl -fsSL https://claude.ai/install.sh | bash"; ` +
+	`echo "  (dropping to a shell)"; ` +
+	dcShellFallback + `; fi`
 
 // dcCandidate is one devcontainer discovered from docker's standard identity
 // labels (devcontainer.local_folder / devcontainer.config_file), which the
