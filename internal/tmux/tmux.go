@@ -26,15 +26,30 @@ type Window struct {
 	Activity    int64 // window_activity, unix seconds
 }
 
+// Pane is one entry of `tmux list-panes`. StartCommand is the command the pane
+// was created with — a stable identifier that survives programs rewriting the
+// pane title.
+type Pane struct {
+	ID           string // "%N"
+	Dead         bool
+	StartCommand string
+}
+
 // Tmux is the subset of tmux operations weft depends on.
 type Tmux interface {
 	HasSession(ctx context.Context, session string) (bool, error)
 	NewSession(ctx context.Context, session, startDir string) error
 	NewWindow(ctx context.Context, session, name, startDir string, cmd []string) (id string, err error)
 	ListWindows(ctx context.Context, session string) ([]Window, error)
+	ListPanes(ctx context.Context, target string) ([]Pane, error)
+	SplitWindow(ctx context.Context, target, startDir string, cmd []string) (id string, err error)
+	JoinPane(ctx context.Context, src, dst string) error
 	KillWindow(ctx context.Context, target string) error
 	KillSession(ctx context.Context, session string) error
 	SelectWindow(ctx context.Context, target string) error
+	SelectPane(ctx context.Context, target string) error
+	SelectLayout(ctx context.Context, target, layout string) error
+	RenameWindow(ctx context.Context, target, name string) error
 	SwitchClient(ctx context.Context, target string) error
 	SendKeys(ctx context.Context, target string, keys ...string) error
 }
@@ -109,6 +124,62 @@ func (e *Exec) ListWindows(ctx context.Context, session string) ([]Window, error
 	return parseWindows(res.Stdout), nil
 }
 
+// ListPanes lists panes of the target window. It returns an empty slice when
+// the session or window does not exist.
+func (e *Exec) ListPanes(ctx context.Context, target string) ([]Pane, error) {
+	const format = "#{pane_id}\t#{pane_dead}\t#{pane_start_command}"
+	res, err := e.r.Run(ctx, "tmux", "list-panes", "-t", target, "-F", format)
+	if err != nil {
+		if code, ok := sysexec.CommandExitCode(err); ok && code == 1 {
+			return nil, nil // session/window absent
+		}
+		return nil, err
+	}
+	return parsePanes(res.Stdout), nil
+}
+
+// SplitWindow splits the target window and returns the new pane id ("%N").
+// When cmd is non-empty it becomes the pane's foreground command.
+func (e *Exec) SplitWindow(ctx context.Context, target, startDir string, cmd []string) (string, error) {
+	args := []string{"split-window", "-t", target, "-P", "-F", "#{pane_id}"}
+	if startDir != "" {
+		args = append(args, "-c", startDir)
+	}
+	if len(cmd) > 0 {
+		args = append(args, "--")
+		args = append(args, cmd...)
+	}
+	res, err := e.r.Mutate(ctx, "tmux", args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(res.Stdout), nil
+}
+
+// JoinPane moves the src window's pane into the dst window.
+func (e *Exec) JoinPane(ctx context.Context, src, dst string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "join-pane", "-s", src, "-t", dst)
+	return err
+}
+
+// SelectPane focuses the pane identified by target ("%id" or full target).
+func (e *Exec) SelectPane(ctx context.Context, target string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "select-pane", "-t", target)
+	return err
+}
+
+// SelectLayout applies a layout (e.g. "tiled") to the target window.
+func (e *Exec) SelectLayout(ctx context.Context, target, layout string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "select-layout", "-t", target, layout)
+	return err
+}
+
+// RenameWindow renames the target window.
+func (e *Exec) RenameWindow(ctx context.Context, target, name string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "rename-window", "-t", target, name)
+	return err
+}
+
 // KillWindow kills the window identified by target ("session:window" or "@id").
 func (e *Exec) KillWindow(ctx context.Context, target string) error {
 	_, err := e.r.Mutate(ctx, "tmux", "kill-window", "-t", target)
@@ -139,6 +210,21 @@ func (e *Exec) SendKeys(ctx context.Context, target string, keys ...string) erro
 	args := append([]string{"send-keys", "-t", target}, keys...)
 	_, err := e.r.Mutate(ctx, "tmux", args...)
 	return err
+}
+
+func parsePanes(out string) []Pane {
+	var ps []Pane
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) < 3 {
+			continue
+		}
+		ps = append(ps, Pane{ID: f[0], Dead: f[1] == "1", StartCommand: f[2]})
+	}
+	return ps
 }
 
 func parseWindows(out string) []Window {

@@ -21,9 +21,13 @@ import (
 // runDcPicker is a seam so tests can drive selection without a terminal.
 var runDcPicker = tui.PickDc
 
-// dcTmuxSession is the machine-global tmux session that holds one window per
-// attached devcontainer — the single terminal that orchestrates them all.
-const dcTmuxSession = "weft/dc"
+// dcTmuxSession is the machine-global tmux session that orchestrates attached
+// devcontainers, and dcGridWindow is its single window: every attached
+// devcontainer is a pane in it, auto-tiled — one terminal shows them all.
+const (
+	dcTmuxSession = "weft/dc"
+	dcGridWindow  = "grid"
+)
 
 // dcShellFallback picks the best interactive shell available in the container.
 const dcShellFallback = `exec zsh -l 2>/dev/null || exec bash -l 2>/dev/null || exec sh -l`
@@ -43,7 +47,10 @@ const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
 	`cp "$HOME/.claude.json" "$HOME/.claude/.claude.json" 2>/dev/null; fi; ` +
 	`if ! command -v claude >/dev/null 2>&1; then ` +
 	`echo "weft: claude not found in this container — installing (one-time)…"; ` +
-	`mkdir -p "$HOME/.local" 2>/dev/null; ` +
+	// Some images create ~/.local as root during build, which blocks the
+	// user-scoped installer after every rebuild; reclaim it when sudo allows.
+	`mkdir -p "$HOME/.local/share" 2>/dev/null; ` +
+	`[ -w "$HOME/.local/share" ] || sudo -n chown -R "$(id -u)" "$HOME/.local" 2>/dev/null; ` +
 	`curl -fsSL https://claude.ai/install.sh | bash; fi; ` +
 	`if command -v claude >/dev/null 2>&1; then claude --continue || claude; else ` +
 	`echo "weft: claude install failed — dropping to a shell."; ` +
@@ -107,7 +114,8 @@ func runDc(cmd *cobra.Command, args []string, start, shell bool) error {
 		if err != nil {
 			return err
 		}
-		cands := dcCandidates(cs, dcWindowNames(cmd, r))
+		panes, winNames := dcAttached(cmd, r)
+		cands := dcCandidates(cs, panes, winNames)
 		matches := matchDc(cands, q)
 
 		if len(matches) == 0 {
@@ -208,36 +216,90 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 			return err
 		}
 	}
-	if !c.HasWindow {
-		// Window names are the dc name; a duplicate name (two checkouts of the
-		// same config layout) reuses the first window.
-		if _, err := tm.NewWindow(ctx, dcTmuxSession, c.Name, c.Folder, launch); err != nil {
+
+	grid := dcTmuxSession + ":" + dcGridWindow
+	panes, err := tm.ListPanes(ctx, grid)
+	if err != nil {
+		return err
+	}
+	if dcFindPane(panes, c) == "" {
+		windows, err := tm.ListWindows(ctx, dcTmuxSession)
+		if err != nil {
 			return err
 		}
+		gridExists, legacy := false, ""
+		for _, w := range windows {
+			if w.Name == dcGridWindow {
+				gridExists = true
+			}
+			if w.Name == c.Name {
+				legacy = dcTmuxSession + ":" + w.Name
+			}
+		}
+		switch {
+		case legacy != "" && gridExists:
+			// A pre-grid window for this devcontainer: absorb it as a pane so
+			// whatever runs in it (a live claude) survives the migration.
+			err = tm.JoinPane(ctx, legacy, grid)
+		case legacy != "":
+			// The legacy window becomes the grid.
+			err = tm.RenameWindow(ctx, legacy, dcGridWindow)
+		case gridExists:
+			_, err = tm.SplitWindow(ctx, grid, c.Folder, launch)
+		default:
+			_, err = tm.NewWindow(ctx, dcTmuxSession, dcGridWindow, c.Folder, launch)
+		}
+		if err != nil {
+			return err
+		}
+		if panes, err = tm.ListPanes(ctx, grid); err != nil {
+			return err
+		}
+		// Two or more panes tile automatically — the requested grid.
+		_ = tm.SelectLayout(ctx, grid, "tiled")
 	}
-	target := dcTmuxSession + ":" + c.Name
-	_ = tm.SelectWindow(ctx, target)
+
+	_ = tm.SelectWindow(ctx, grid)
+	if id := dcFindPane(panes, c); id != "" {
+		_ = tm.SelectPane(ctx, id)
+	}
 
 	if tmux.InTmux() {
-		return tm.SwitchClient(ctx, target)
+		return tm.SwitchClient(ctx, grid)
 	}
 	ex := execCommand(ctx, "tmux", tmux.AttachArgs(dcTmuxSession)...)
 	ex.Stdin, ex.Stdout, ex.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return ex.Run()
 }
 
-// dcWindowNames returns the names of existing weft/dc tmux windows; tmux being
-// down or the session missing simply yields none.
-func dcWindowNames(cmd *cobra.Command, r sysexec.Runner) map[string]bool {
-	ws, err := tmux.New(r).ListWindows(cmd.Context(), dcTmuxSession)
+// dcFindPane returns the id of the grid pane belonging to the candidate, keyed
+// by the pane's start command (stable — programs may rewrite pane titles).
+// Legacy panes adopted via join/rename match too: their start command carries
+// the same --workspace-folder/--config pair.
+func dcFindPane(panes []tmux.Pane, c dcCandidate) string {
+	for _, p := range panes {
+		if strings.Contains(p.StartCommand, "--workspace-folder "+c.Folder) &&
+			strings.Contains(p.StartCommand, "--config "+c.ConfigPath) {
+			return p.ID
+		}
+	}
+	return ""
+}
+
+// dcAttached returns the grid's panes and the names of weft/dc windows (legacy
+// pre-grid layout); tmux being down or the session missing simply yields none.
+func dcAttached(cmd *cobra.Command, r sysexec.Runner) ([]tmux.Pane, map[string]bool) {
+	tm := tmux.New(r)
+	panes, _ := tm.ListPanes(cmd.Context(), dcTmuxSession+":"+dcGridWindow)
+	ws, err := tm.ListWindows(cmd.Context(), dcTmuxSession)
 	if err != nil {
-		return nil
+		return panes, nil
 	}
 	names := make(map[string]bool, len(ws))
 	for _, w := range ws {
 		names[w.Name] = true
 	}
-	return names
+	return panes, names
 }
 
 // splitAtDash separates "[query] -- cmd..." using cobra's dash position.
@@ -250,8 +312,9 @@ func splitAtDash(args []string, dash int) (query, runCmd []string) {
 
 // dcCandidates converts labelled containers into display candidates, keeping
 // one entry per (folder, config) pair and preferring a running container over
-// a stopped leftover for the same devcontainer.
-func dcCandidates(cs []dockerx.Container, windows map[string]bool) []dcCandidate {
+// a stopped leftover for the same devcontainer. A candidate is marked attached
+// when it has a grid pane or a legacy (pre-grid) window.
+func dcCandidates(cs []dockerx.Container, panes []tmux.Pane, windows map[string]bool) []dcCandidate {
 	byKey := map[string]dcCandidate{}
 	var keys []string
 	for _, c := range cs {
@@ -263,8 +326,8 @@ func dcCandidates(cs []dockerx.Container, windows map[string]bool) []dcCandidate
 			ConfigPath:    c.Labels["devcontainer.config_file"],
 			ContainerName: c.Names,
 			State:         c.State,
-			HasWindow:     windows[name],
 		}
+		cand.HasWindow = windows[name] || dcFindPane(panes, cand) != ""
 		key := cand.Folder + "\x00" + cand.ConfigPath
 		prev, seen := byKey[key]
 		if !seen {

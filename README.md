@@ -136,15 +136,18 @@ weft dc oasys-ui -- pnpm test   # one-shot command, no tmux
 weft dc gantry --start   # bring a stopped devcontainer up first
 ```
 
-Picking a devcontainer opens (or reuses) a window in the dedicated tmux session
-`weft/dc` whose foreground runs **claude inside that container, resuming its last
-conversation** (`claude --continue`, falling back to a fresh claude). If claude is
-not installed in the container — rebuilds wipe it — weft installs the native build
-into `~/.local/bin` first (user-scoped, one-time per container) and only drops to a
-shell if that fails. Each picked devcontainer gets its own window, so one terminal
-drives them all: switch with `prefix+n`/`p` or just run `weft dc` again — entries
-marked `*` already have a window. Detach with `prefix+d`; the claudes keep running
-in tmux.
+Picking a devcontainer opens (or reuses) a pane in the `grid` window of the
+dedicated tmux session `weft/dc`, running **claude inside that container and
+resuming its last conversation** (`claude --continue`, falling back to a fresh
+claude). If claude is not installed in the container — rebuilds wipe it — weft
+installs the native build into `~/.local/bin` first (user-scoped, one-time per
+container) and only drops to a shell if that fails.
+
+Every picked devcontainer becomes another pane in the same window, **auto-tiled
+from the second one on** — one screen shows every claude side by side. Move between
+panes with `prefix+arrows`, zoom one to full screen (and back) with `prefix+z`,
+detach with `prefix+d`; running `weft dc` again focuses the pane you pick — entries
+marked `*` are already in the grid.
 
 Note: a claude already running in another terminal (e.g. a VS Code panel) cannot be
 adopted — its process belongs to that terminal. `--continue` resumes the same
