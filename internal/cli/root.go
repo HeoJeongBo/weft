@@ -66,6 +66,7 @@ script the same actions.`,
 		newStopCmd(),
 		newExecCmd(),
 		newCdCmd(),
+		newDcCmd(),
 		newRepairCmd(),
 	)
 	return root

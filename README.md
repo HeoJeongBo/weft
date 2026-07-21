@@ -120,6 +120,24 @@ See [`weft.yaml.example`](./weft.yaml.example).
 > weft bind-mounts the repo's `.git` directory at its host path and registers it as a git
 > `safe.directory`. Opt out with `devcontainer.mount_git: false`.
 
+## Jump into any devcontainer
+
+`weft dc` scans the machine for devcontainers — including ones VS Code started — and
+attaches a shell, wifi-scan style. Discovery uses the standard
+`devcontainer.local_folder` docker label that the devcontainer CLI and VS Code stamp on
+every container they create, so it works on any project, from any directory, with no
+weft configuration at all.
+
+```sh
+weft dc                  # scan → pick with ↑/↓ → enter attaches (r rescans, q quits)
+weft dc oasys-ui         # unique match attaches directly
+weft dc oasys-ui -- pnpm test   # run a command inside instead of a shell
+weft dc gantry --start   # bring a stopped devcontainer up first
+```
+
+Picking a stopped devcontainer in the interactive list brings it up automatically before
+attaching. Piped output (`weft dc | cat`) prints a plain table instead of the picker.
+
 ## Without a devcontainer
 
 The devcontainer is optional. Set `devcontainer.enabled: false` in `weft.yaml` (this is what
