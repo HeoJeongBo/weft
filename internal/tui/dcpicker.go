@@ -15,6 +15,7 @@ type DcItem struct {
 	Container string
 	Workspace string
 	State     string // running, exited, ...
+	HasWindow bool   // a weft/dc tmux window for it already exists
 }
 
 // PickDc outcomes besides a selected index.
@@ -84,8 +85,12 @@ func (m dcModel) View() tea.View {
 		if it.State == "running" {
 			glyph, col = "●", m.theme.success
 		}
+		name := it.Name
+		if it.HasWindow {
+			name += "*"
+		}
 		line := fmt.Sprintf("%s %-8s %-18s %-28s %s",
-			glyph, it.State, dcTrunc(it.Name, 18), dcTrunc(it.Container, 28), it.Workspace)
+			glyph, it.State, dcTrunc(name, 18), dcTrunc(it.Container, 28), it.Workspace)
 		style := lipgloss.NewStyle().Foreground(col)
 		prefix := "  "
 		if i == m.cursor {
@@ -94,7 +99,7 @@ func (m dcModel) View() tea.View {
 		}
 		b.WriteString(style.Render(prefix+line) + "\n")
 	}
-	b.WriteString("\n" + m.theme.footer.Render("↑/↓ move · enter attach · r rescan · q quit") + "\n")
+	b.WriteString("\n" + m.theme.footer.Render("↑/↓ move · enter attach claude · r rescan · q quit · * window open") + "\n")
 	return tea.NewView(b.String())
 }
 

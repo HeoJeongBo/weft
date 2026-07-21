@@ -12,7 +12,7 @@ import (
 
 func pickerItems() []DcItem {
 	return []DcItem{
-		{Name: "oasys-ui", Container: "oasys-ui-dev-1", Workspace: "/w/ui", State: "running"},
+		{Name: "oasys-ui", Container: "oasys-ui-dev-1", Workspace: "/w/ui", State: "running", HasWindow: true},
 		{Name: "gantry", Container: "gantry_devcontainer-dev-1-with-a-very-long-name", Workspace: "/w/gantry", State: "exited"},
 	}
 }
@@ -78,7 +78,7 @@ func TestDcPickerSelectAndQuit(t *testing.T) {
 func TestDcPickerView(t *testing.T) {
 	m := dcModel{theme: newTheme(), items: pickerItems(), result: DcCancelled}
 	v := m.View().Content
-	for _, want := range []string{"devcontainers", "●", "○", "❯", "oasys-ui", "/w/gantry", "…", "enter attach"} {
+	for _, want := range []string{"devcontainers", "●", "○", "❯", "oasys-ui*", "/w/gantry", "…", "enter attach"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("view missing %q:\n%s", want, v)
 		}

@@ -120,10 +120,10 @@ See [`weft.yaml.example`](./weft.yaml.example).
 > weft bind-mounts the repo's `.git` directory at its host path and registers it as a git
 > `safe.directory`. Opt out with `devcontainer.mount_git: false`.
 
-## Jump into any devcontainer
+## Orchestrate any devcontainer from one terminal
 
 `weft dc` scans the machine for devcontainers — including ones VS Code started — and
-attaches a shell, wifi-scan style. Discovery uses the standard
+orchestrates them from a single terminal, wifi-scan style. Discovery uses the standard
 `devcontainer.local_folder` docker label that the devcontainer CLI and VS Code stamp on
 every container they create, so it works on any project, from any directory, with no
 weft configuration at all.
@@ -131,12 +131,24 @@ weft configuration at all.
 ```sh
 weft dc                  # scan → pick with ↑/↓ → enter attaches (r rescans, q quits)
 weft dc oasys-ui         # unique match attaches directly
-weft dc oasys-ui -- pnpm test   # run a command inside instead of a shell
+weft dc --shell          # open a shell window instead of claude
+weft dc oasys-ui -- pnpm test   # one-shot command, no tmux
 weft dc gantry --start   # bring a stopped devcontainer up first
 ```
 
-Picking a stopped devcontainer in the interactive list brings it up automatically before
-attaching. Piped output (`weft dc | cat`) prints a plain table instead of the picker.
+Picking a devcontainer opens (or reuses) a window in the dedicated tmux session
+`weft/dc` whose foreground runs **claude inside that container, resuming its last
+conversation** (`claude --continue`, falling back to a fresh claude, then to a shell
+when claude is not installed in the image). Each picked devcontainer gets its own
+window, so one terminal drives them all: switch with `prefix+n`/`p` or just run
+`weft dc` again — entries marked `*` already have a window. Detach with `prefix+d`;
+the claudes keep running in tmux.
+
+Note: a claude already running in another terminal (e.g. a VS Code panel) cannot be
+adopted — its process belongs to that terminal. `--continue` resumes the same
+conversation instead; claudes started by weft live in tmux and can be attached and
+detached freely. Picking a stopped devcontainer brings it up automatically. Piped
+output (`weft dc | cat`) prints a plain table instead of the picker.
 
 ## Without a devcontainer
 
