@@ -265,6 +265,9 @@ func TestDcShowFlows(t *testing.T) {
 		if sb := recorded(lines, "split-window -hbf"); !strings.Contains(sb, "dc sidebar") {
 			t.Errorf("sidebar split = %q", sb)
 		}
+		if so := recorded(lines, "set-option"); !strings.Contains(so, "-s set-clipboard on") {
+			t.Errorf("set-clipboard not enabled: %q", so)
+		}
 		if got := strings.Join((*calls)[0], " "); got != "tmux attach-session -t weft/dc" {
 			t.Errorf("attach argv = %q", got)
 		}

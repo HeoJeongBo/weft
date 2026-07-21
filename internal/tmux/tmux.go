@@ -51,6 +51,8 @@ type Tmux interface {
 	SwapPane(ctx context.Context, src, dst string) error
 	JoinPaneRight(ctx context.Context, src, dst string) error
 	BreakPane(ctx context.Context, src string) error
+	KillPane(ctx context.Context, target string) error
+	SetServerOption(ctx context.Context, name, value string) error
 	KillWindow(ctx context.Context, target string) error
 	KillSession(ctx context.Context, session string) error
 	SelectWindow(ctx context.Context, target string) error
@@ -222,6 +224,18 @@ func (e *Exec) JoinPaneRight(ctx context.Context, src, dst string) error {
 // BreakPane detaches src into its own (background) window.
 func (e *Exec) BreakPane(ctx context.Context, src string) error {
 	_, err := e.r.Mutate(ctx, "tmux", "break-pane", "-d", "-s", src)
+	return err
+}
+
+// KillPane kills the pane identified by target ("%id" or full target).
+func (e *Exec) KillPane(ctx context.Context, target string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "kill-pane", "-t", target)
+	return err
+}
+
+// SetServerOption sets a tmux server option (e.g. set-clipboard on).
+func (e *Exec) SetServerOption(ctx context.Context, name, value string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "set-option", "-s", name, value)
 	return err
 }
 

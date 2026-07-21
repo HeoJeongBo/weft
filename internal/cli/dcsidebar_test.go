@@ -208,6 +208,87 @@ func TestSidebarAttachError(t *testing.T) {
 	}
 }
 
+func TestSidebarClose(t *testing.T) {
+	st := dcTmuxState{
+		all:  dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+		main: dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+	}
+
+	pick := func(m sidebarModel, name string) sidebarModel {
+		for i, c := range m.items {
+			if c.Name == name {
+				m.cursor = i
+			}
+		}
+		return m
+	}
+
+	t.Run("kills the pane", func(t *testing.T) {
+		m := sbModel(t, st)
+		m, _ = sbUpdate(t, m, m.scanCmd()().(sbScanMsg))
+		m = pick(m, "oasys-ui")
+		m, cmd := sbUpdate(t, m, sbKey("x"))
+		if !strings.Contains(m.status, "✕ oasys-ui") || cmd == nil {
+			t.Errorf("status = %q", m.status)
+		}
+	})
+
+	t.Run("no pane to close", func(t *testing.T) {
+		m := sbModel(t, st)
+		m, _ = sbUpdate(t, m, m.scanCmd()().(sbScanMsg))
+		m = pick(m, "gantry")
+		m, _ = sbUpdate(t, m, sbKey("x"))
+		if !strings.Contains(m.status, "no pane") {
+			t.Errorf("status = %q", m.status)
+		}
+	})
+
+	t.Run("pane vanished between scan and close", func(t *testing.T) {
+		n := 0
+		inner := dcHandler(dcFixture(), st)
+		fake := &sysexec.FakeRunner{Handler: func(c sysexec.Call) (sysexec.Result, error) {
+			if strings.Contains(c.Line(), "list-panes -s") {
+				n++
+				if n >= 2 { // the close-time re-lookup finds nothing
+					return sysexec.Result{ExitCode: 1}, cmdErr(c, 1)
+				}
+			}
+			return inner(c)
+		}}
+		m := newSidebarModel(context.Background(), fake)
+		m, _ = sbUpdate(t, m, m.scanCmd()().(sbScanMsg))
+		m = pick(m, "oasys-ui")
+		m, _ = sbUpdate(t, m, sbKey("x"))
+		if !strings.Contains(m.status, "already gone") {
+			t.Errorf("status = %q", m.status)
+		}
+	})
+
+	t.Run("kill failure", func(t *testing.T) {
+		inner := dcHandler(dcFixture(), st)
+		fake := &sysexec.FakeRunner{Handler: func(c sysexec.Call) (sysexec.Result, error) {
+			if strings.Contains(c.Line(), "kill-pane") {
+				return sysexec.Result{ExitCode: 1}, cmdErr(c, 1)
+			}
+			return inner(c)
+		}}
+		m := newSidebarModel(context.Background(), fake)
+		m, _ = sbUpdate(t, m, m.scanCmd()().(sbScanMsg))
+		m = pick(m, "oasys-ui")
+		m, _ = sbUpdate(t, m, sbKey("x"))
+		if !strings.Contains(m.status, "could not close") {
+			t.Errorf("status = %q", m.status)
+		}
+	})
+
+	t.Run("empty list is a no-op", func(t *testing.T) {
+		m := sbModel(t, dcTmuxState{})
+		if _, cmd := sbUpdate(t, m, sbKey("x")); cmd != nil {
+			t.Error("x on empty list returned a cmd")
+		}
+	})
+}
+
 func TestSidebarView(t *testing.T) {
 	m := sbModel(t, dcTmuxState{})
 	if v := m.View().Content; !strings.Contains(v, "scanning") {

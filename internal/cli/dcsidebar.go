@@ -112,6 +112,10 @@ func (m sidebarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.items) > 0 {
 				return m.attach(m.items[m.cursor])
 			}
+		case "x":
+			if len(m.items) > 0 {
+				return m.close(m.items[m.cursor])
+			}
 		case "r":
 			return m, m.scanCmd()
 		case "q", "ctrl+c":
@@ -138,6 +142,27 @@ func (m sidebarModel) attach(c dcCandidate) (tea.Model, tea.Cmd) {
 		_ = tm.SelectPane(m.ctx, paneID)
 	}
 	m.status = "→ " + c.Name
+	return m, tea.Batch(m.scanCmd(), sbAfter(3*time.Second, sbClearMsg{}))
+}
+
+// close kills the selected devcontainer's pane — shown or parked — so an
+// accidentally attached claude can be dismissed from the list.
+func (m sidebarModel) close(c dcCandidate) (tea.Model, tea.Cmd) {
+	if !c.HasWindow {
+		m.status = c.Name + " has no pane"
+		return m, sbAfter(3*time.Second, sbClearMsg{})
+	}
+	tm := tmux.New(m.r)
+	all, _ := tm.ListAllPanes(m.ctx, dcTmuxSession)
+	id := dcFindPane(all, c)
+	switch {
+	case id == "":
+		m.status = c.Name + " pane already gone"
+	case tm.KillPane(m.ctx, id) != nil:
+		m.status = "could not close " + c.Name
+	default:
+		m.status = "✕ " + c.Name
+	}
 	return m, tea.Batch(m.scanCmd(), sbAfter(3*time.Second, sbClearMsg{}))
 }
 
@@ -181,6 +206,6 @@ func (m sidebarModel) View() tea.View {
 	if m.status != "" {
 		b.WriteString("\n" + colorize(m.status, ansiYellow, true) + "\n")
 	}
-	b.WriteString("\n" + colorize("jk move · ⏎ attach · q quit", ansiDim, true) + "\n")
+	b.WriteString("\n" + colorize("jk move · ⏎ attach · x close · q quit", ansiDim, true) + "\n")
 	return tea.NewView(b.String())
 }

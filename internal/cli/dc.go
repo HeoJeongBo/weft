@@ -247,6 +247,9 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 			return err
 		}
 	}
+	// Let claude's "c to copy" reach the terminal clipboard: tmux's default
+	// set-clipboard=external drops OSC 52 sequences coming from applications.
+	_ = tm.SetServerOption(ctx, "set-clipboard", "on")
 
 	paneID, err := dcShow(ctx, tm, c, launch, !noSidebar)
 	if err != nil {
