@@ -34,6 +34,13 @@ const dcShellFallback = `exec zsh -l 2>/dev/null || exec bash -l 2>/dev/null || 
 // only drops to a shell if that fails. ~/.local/bin is prepended because the
 // installer only teaches interactive shells about it.
 const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
+	// Keep claude's global state (account, onboarding) inside ~/.claude: that
+	// directory is typically a host mount, so login and setup survive container
+	// rebuilds and are shared between containers. Migrate an existing
+	// home-level ~/.claude.json in so a past login is not lost.
+	`export CLAUDE_CONFIG_DIR="$HOME/.claude"; ` +
+	`if [ ! -f "$HOME/.claude/.claude.json" ] && [ -f "$HOME/.claude.json" ]; then ` +
+	`cp "$HOME/.claude.json" "$HOME/.claude/.claude.json" 2>/dev/null; fi; ` +
 	`if ! command -v claude >/dev/null 2>&1; then ` +
 	`echo "weft: claude not found in this container — installing (one-time)…"; ` +
 	`mkdir -p "$HOME/.local" 2>/dev/null; ` +
