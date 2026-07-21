@@ -31,7 +31,9 @@ type Window struct {
 // pane title.
 type Pane struct {
 	ID           string // "%N"
+	WindowID     string // "@N"
 	Dead         bool
+	Command      string // current foreground command
 	StartCommand string
 }
 
@@ -42,13 +44,17 @@ type Tmux interface {
 	NewWindow(ctx context.Context, session, name, startDir string, cmd []string) (id string, err error)
 	ListWindows(ctx context.Context, session string) ([]Window, error)
 	ListPanes(ctx context.Context, target string) ([]Pane, error)
-	SplitWindow(ctx context.Context, target, startDir string, cmd []string) (id string, err error)
-	JoinPane(ctx context.Context, src, dst string) error
+	ListAllPanes(ctx context.Context, session string) ([]Pane, error)
+	SplitWindowLeft(ctx context.Context, target string, width int, cmd []string) (id string, err error)
+	SplitWindowRight(ctx context.Context, target, startDir string, cmd []string) (id string, err error)
+	NewBackgroundWindow(ctx context.Context, session, name, startDir string, cmd []string) (paneID string, err error)
+	SwapPane(ctx context.Context, src, dst string) error
+	JoinPaneRight(ctx context.Context, src, dst string) error
+	BreakPane(ctx context.Context, src string) error
 	KillWindow(ctx context.Context, target string) error
 	KillSession(ctx context.Context, session string) error
 	SelectWindow(ctx context.Context, target string) error
 	SelectPane(ctx context.Context, target string) error
-	SelectLayout(ctx context.Context, target, layout string) error
 	RenameWindow(ctx context.Context, target, name string) error
 	SwitchClient(ctx context.Context, target string) error
 	SendKeys(ctx context.Context, target string, keys ...string) error
@@ -124,11 +130,25 @@ func (e *Exec) ListWindows(ctx context.Context, session string) ([]Window, error
 	return parseWindows(res.Stdout), nil
 }
 
+// paneFormat is shared by the pane listings; the start command comes last so
+// embedded tabs cannot shift the fixed fields.
+const paneFormat = "#{pane_id}\t#{window_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_start_command}"
+
 // ListPanes lists panes of the target window. It returns an empty slice when
 // the session or window does not exist.
 func (e *Exec) ListPanes(ctx context.Context, target string) ([]Pane, error) {
-	const format = "#{pane_id}\t#{pane_dead}\t#{pane_start_command}"
-	res, err := e.r.Run(ctx, "tmux", "list-panes", "-t", target, "-F", format)
+	return e.listPanes(ctx, "-t", target)
+}
+
+// ListAllPanes lists every pane in the session, across all windows — including
+// background "parked" ones.
+func (e *Exec) ListAllPanes(ctx context.Context, session string) ([]Pane, error) {
+	return e.listPanes(ctx, "-s", "-t", session)
+}
+
+func (e *Exec) listPanes(ctx context.Context, sel ...string) ([]Pane, error) {
+	args := append([]string{"list-panes"}, sel...)
+	res, err := e.r.Run(ctx, "tmux", append(args, "-F", paneFormat)...)
 	if err != nil {
 		if code, ok := sysexec.CommandExitCode(err); ok && code == 1 {
 			return nil, nil // session/window absent
@@ -138,10 +158,40 @@ func (e *Exec) ListPanes(ctx context.Context, target string) ([]Pane, error) {
 	return parsePanes(res.Stdout), nil
 }
 
-// SplitWindow splits the target window and returns the new pane id ("%N").
-// When cmd is non-empty it becomes the pane's foreground command.
-func (e *Exec) SplitWindow(ctx context.Context, target, startDir string, cmd []string) (string, error) {
-	args := []string{"split-window", "-t", target, "-P", "-F", "#{pane_id}"}
+// SplitWindowLeft splits the target window with a fixed-width pane on the far
+// left (a sidebar) and returns the new pane id.
+func (e *Exec) SplitWindowLeft(ctx context.Context, target string, width int, cmd []string) (string, error) {
+	return e.splitWindow(ctx, cmd, "-hbf", "-l", strconv.Itoa(width), "-t", target)
+}
+
+// SplitWindowRight splits the target horizontally (new pane on the right) and
+// returns the new pane id.
+func (e *Exec) SplitWindowRight(ctx context.Context, target, startDir string, cmd []string) (string, error) {
+	args := []string{"-h", "-t", target}
+	if startDir != "" {
+		args = append(args, "-c", startDir)
+	}
+	return e.splitWindow(ctx, cmd, args...)
+}
+
+func (e *Exec) splitWindow(ctx context.Context, cmd []string, opts ...string) (string, error) {
+	args := append([]string{"split-window"}, opts...)
+	args = append(args, "-P", "-F", "#{pane_id}")
+	if len(cmd) > 0 {
+		args = append(args, "--")
+		args = append(args, cmd...)
+	}
+	res, err := e.r.Mutate(ctx, "tmux", args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(res.Stdout), nil
+}
+
+// NewBackgroundWindow creates a detached window running cmd and returns the id
+// of its pane — a "parked" pane ready to be swapped into view.
+func (e *Exec) NewBackgroundWindow(ctx context.Context, session, name, startDir string, cmd []string) (string, error) {
+	args := []string{"new-window", "-d", "-t", session + ":", "-n", name, "-P", "-F", "#{pane_id}"}
 	if startDir != "" {
 		args = append(args, "-c", startDir)
 	}
@@ -156,21 +206,28 @@ func (e *Exec) SplitWindow(ctx context.Context, target, startDir string, cmd []s
 	return strings.TrimSpace(res.Stdout), nil
 }
 
-// JoinPane moves the src window's pane into the dst window.
-func (e *Exec) JoinPane(ctx context.Context, src, dst string) error {
-	_, err := e.r.Mutate(ctx, "tmux", "join-pane", "-s", src, "-t", dst)
+// SwapPane exchanges the positions of two panes (they may live in different
+// windows) without focusing either.
+func (e *Exec) SwapPane(ctx context.Context, src, dst string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "swap-pane", "-d", "-s", src, "-t", dst)
+	return err
+}
+
+// JoinPaneRight moves the src pane into dst as a new pane on the right.
+func (e *Exec) JoinPaneRight(ctx context.Context, src, dst string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "join-pane", "-h", "-s", src, "-t", dst)
+	return err
+}
+
+// BreakPane detaches src into its own (background) window.
+func (e *Exec) BreakPane(ctx context.Context, src string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "break-pane", "-d", "-s", src)
 	return err
 }
 
 // SelectPane focuses the pane identified by target ("%id" or full target).
 func (e *Exec) SelectPane(ctx context.Context, target string) error {
 	_, err := e.r.Mutate(ctx, "tmux", "select-pane", "-t", target)
-	return err
-}
-
-// SelectLayout applies a layout (e.g. "tiled") to the target window.
-func (e *Exec) SelectLayout(ctx context.Context, target, layout string) error {
-	_, err := e.r.Mutate(ctx, "tmux", "select-layout", "-t", target, layout)
 	return err
 }
 
@@ -218,11 +275,11 @@ func parsePanes(out string) []Pane {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		f := strings.SplitN(line, "\t", 3)
-		if len(f) < 3 {
+		f := strings.SplitN(line, "\t", 5)
+		if len(f) < 5 {
 			continue
 		}
-		ps = append(ps, Pane{ID: f[0], Dead: f[1] == "1", StartCommand: f[2]})
+		ps = append(ps, Pane{ID: f[0], WindowID: f[1], Dead: f[2] == "1", Command: f[3], StartCommand: f[4]})
 	}
 	return ps
 }

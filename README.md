@@ -136,18 +136,22 @@ weft dc oasys-ui -- pnpm test   # one-shot command, no tmux
 weft dc gantry --start   # bring a stopped devcontainer up first
 ```
 
-Picking a devcontainer opens (or reuses) a pane in the `grid` window of the
-dedicated tmux session `weft/dc`, running **claude inside that container and
-resuming its last conversation** (`claude --continue`, falling back to a fresh
-claude). If claude is not installed in the container — rebuilds wipe it — weft
-installs the native build into `~/.local/bin` first (user-scoped, one-time per
-container) and only drops to a shell if that fails.
+The layout is master-detail, like a workspace manager: a **sidebar on the left**
+lists every devcontainer with its state (`▶` displayed, `*` running in the
+background, `✕` pane died) plus a token-usage summary (today / last 7 days,
+aggregated from `~/.claude`), and the **right side shows one claude at a time**,
+running inside the selected container and resuming its last conversation
+(`claude --continue`). Everything else keeps running in parked background
+windows; selecting — in the sidebar (`j`/`k` + enter) or by rerunning `weft dc` —
+swaps the displayed pane atomically.
 
-Every picked devcontainer becomes another pane in the same window, **auto-tiled
-from the second one on** — one screen shows every claude side by side. Move between
-panes with `prefix+arrows`, zoom one to full screen (and back) with `prefix+z`,
-detach with `prefix+d`; running `weft dc` again focuses the pane you pick — entries
-marked `*` are already in the grid.
+If claude is not installed in the container — rebuilds wipe it — weft installs
+the native build into `~/.local/bin` first (user-scoped, one-time per container,
+reclaiming a root-owned `~/.local` via sudo when needed) and only drops to a
+shell if that fails. Run `weft dc token` once to mint a long-lived auth token
+(stored at `~/.claude/weft-oauth-token`, mode 0600): every pane exports it as
+`CLAUDE_CODE_OAUTH_TOKEN`, so freshly built containers stop asking to log in.
+Detach with `prefix+d`; precise rate limits live in claude's own `/usage`.
 
 Note: a claude already running in another terminal (e.g. a VS Code panel) cannot be
 adopted — its process belongs to that terminal. `--continue` resumes the same

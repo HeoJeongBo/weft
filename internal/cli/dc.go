@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -18,15 +19,20 @@ import (
 	"github.com/HeoJeongBo/weft/internal/tui"
 )
 
-// runDcPicker is a seam so tests can drive selection without a terminal.
-var runDcPicker = tui.PickDc
+// Seams so tests can drive selection and pane commands without a terminal.
+var (
+	runDcPicker    = tui.PickDc
+	executablePath = os.Executable
+	userHomeDir    = os.UserHomeDir
+)
 
 // dcTmuxSession is the machine-global tmux session that orchestrates attached
 // devcontainers, and dcGridWindow is its single window: every attached
 // devcontainer is a pane in it, auto-tiled — one terminal shows them all.
 const (
-	dcTmuxSession = "weft/dc"
-	dcGridWindow  = "grid"
+	dcTmuxSession  = "weft/dc"
+	dcGridWindow   = "grid"
+	dcSidebarWidth = 30
 )
 
 // dcShellFallback picks the best interactive shell available in the container.
@@ -45,6 +51,10 @@ const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
 	`export CLAUDE_CONFIG_DIR="$HOME/.claude"; ` +
 	`if [ ! -f "$HOME/.claude/.claude.json" ] && [ -f "$HOME/.claude.json" ]; then ` +
 	`cp "$HOME/.claude.json" "$HOME/.claude/.claude.json" 2>/dev/null; fi; ` +
+	// A long-lived token minted by `weft dc token` lives in the shared mount
+	// and spares the per-container OAuth login.
+	`[ -f "$HOME/.claude/weft-oauth-token" ] && ` +
+	`export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/weft-oauth-token")"; ` +
 	`if ! command -v claude >/dev/null 2>&1; then ` +
 	`echo "weft: claude not found in this container — installing (one-time)…"; ` +
 	// Some images create ~/.local as root during build, which blocks the
@@ -66,11 +76,13 @@ type dcCandidate struct {
 	ConfigPath    string // devcontainer.config_file
 	ContainerName string
 	State         string // running, exited, ...
-	HasWindow     bool   // a weft/dc tmux window with this name already exists
+	HasWindow     bool   // an attached pane exists somewhere in weft/dc
+	Shown         bool   // that pane is the one displayed in the main window
+	PaneDead      bool   // the pane exists but its process has died
 }
 
 func newDcCmd() *cobra.Command {
-	var start, shell bool
+	var start, shell, noSidebar bool
 	cmd := &cobra.Command{
 		Use:   "dc [query] [-- cmd...]",
 		Short: "Scan every devcontainer on this machine and attach to one",
@@ -78,44 +90,48 @@ func newDcCmd() *cobra.Command {
 standard devcontainer.local_folder docker label, then orchestrate them from a
 single terminal.
 
-On a terminal, "weft dc" opens a picker: enter attaches a tmux window (session
-"weft/dc") whose foreground runs claude inside the container, resuming its
-last conversation (claude --continue; a stopped devcontainer is brought up
-first, and a shell replaces claude when it is not installed). Rerunning weft
-dc reuses the window, so picking is also how you switch between containers.
---shell opens a plain shell window instead of claude. Append "-- cmd..." to
-run a one-shot command without tmux. Works outside git repositories; piped
-output falls back to a plain table.`,
+On a terminal, "weft dc" opens a picker: enter attaches a pane in the "grid"
+window of tmux session weft/dc, running claude inside that container and
+resuming its last conversation (a stopped devcontainer is brought up first; a
+missing claude is installed). Every picked devcontainer becomes another pane,
+auto-tiled from the second one on, with a sidebar listing containers and
+usage on the left. Rerunning weft dc focuses the pane you pick. --shell opens
+a shell pane instead of claude; append "-- cmd..." for a one-shot command
+without tmux. Works outside git repositories; piped output prints a table.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDc(cmd, args, start, shell)
+			return runDc(cmd, args, start, shell, noSidebar)
 		},
 	}
 	cmd.Flags().BoolVar(&start, "start", false, "bring a stopped devcontainer up before attaching")
-	cmd.Flags().BoolVar(&shell, "shell", false, "open a shell window instead of claude")
+	cmd.Flags().BoolVar(&shell, "shell", false, "open a shell pane instead of claude")
+	cmd.Flags().BoolVar(&noSidebar, "no-sidebar", false, "do not add the sidebar pane to the grid")
+	cmd.AddCommand(newDcSidebarCmd(), newDcTokenCmd())
 	return cmd
 }
 
-func runDc(cmd *cobra.Command, args []string, start, shell bool) error {
+// dcRunner builds the runner for dc commands (which never open a weft project).
+func dcRunner(cmd *cobra.Command) (sysexec.Runner, int, bool) {
+	verbosity, _ := cmd.Flags().GetCount("verbose")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	log := logx.New(os.Stderr, verbosity, false)
+	return newRunner(dryRun, log), verbosity, dryRun
+}
+
+func runDc(cmd *cobra.Command, args []string, start, shell, noSidebar bool) error {
 	query, runCmd := splitAtDash(args, cmd.ArgsLenAtDash())
 	if len(query) > 1 {
 		return fmt.Errorf("at most one query expected, got %d", len(query))
 	}
 	q := strings.Join(query, "")
 
-	verbosity, _ := cmd.Flags().GetCount("verbose")
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	log := logx.New(os.Stderr, verbosity, false)
-	r := newRunner(dryRun, log)
-
+	r, verbosity, dryRun := dcRunner(cmd)
 	interactive := len(runCmd) == 0 && isTTY(cmd.OutOrStdout())
 
 	for {
-		cs, err := dockerx.New(r).Ps(cmd.Context(), "devcontainer.local_folder")
+		cands, err := dcScan(cmd.Context(), r)
 		if err != nil {
 			return err
 		}
-		panes, winNames := dcAttached(cmd, r)
-		cands := dcCandidates(cs, panes, winNames)
 		matches := matchDc(cands, q)
 
 		if len(matches) == 0 {
@@ -155,37 +171,56 @@ func runDc(cmd *cobra.Command, args []string, start, shell bool) error {
 			chosen = matches[idx]
 			autoStart = true // picking a stopped one means "bring it up and attach"
 		}
-		return dcAttach(cmd, r, chosen, autoStart, runCmd, verbosity, dryRun, shell)
+		return dcAttach(cmd, r, chosen, autoStart, runCmd, verbosity, dryRun, shell, noSidebar)
 	}
 }
 
+// dcUp brings a non-running devcontainer up, streaming build output at -v.
+func dcUp(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, verbosity int) error {
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s devcontainer up (%s)\n", colorize("▶", ansiCyan, colorEnabled(cmd)), c.Name)
+	sink := func(l sysexec.Line) {
+		if verbosity > 0 {
+			fmt.Fprintln(cmd.ErrOrStderr(), l.Text)
+		}
+	}
+	_, err := devcontainer.New(r).Up(cmd.Context(), sink, devcontainer.UpOpts{
+		WorkspaceFolder: c.Folder,
+		ConfigPath:      c.ConfigPath,
+	})
+	return err
+}
+
+// dcLaunchArgs builds the pane's foreground command for a candidate.
+func dcLaunchArgs(c dcCandidate, shell bool) []string {
+	chain := dcClaudeChain
+	if shell {
+		chain = dcShellFallback
+	}
+	return devcontainer.ExecArgs(devcontainer.ExecOpts{
+		WorkspaceFolder: c.Folder,
+		ConfigPath:      c.ConfigPath,
+	}, "sh", "-lc", chain)
+}
+
 // dcAttach brings the devcontainer up if needed, then either runs a one-shot
-// command inside it or ensures a weft/dc tmux window running claude (or a
-// shell) and hands the terminal to that session.
-func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart bool, runCmd []string, verbosity int, dryRun, shell bool) error {
+// command inside it or ensures its grid pane (plus the sidebar) and hands the
+// terminal to the weft/dc session.
+func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart bool, runCmd []string, verbosity int, dryRun, shell, noSidebar bool) error {
 	if c.State != "running" {
 		if !autoStart {
 			return fmt.Errorf("%s is %s — rerun with --start to bring it up", c.Name, c.State)
 		}
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s devcontainer up (%s)\n", colorize("▶", ansiCyan, colorEnabled(cmd)), c.Name)
-		sink := func(l sysexec.Line) {
-			if verbosity > 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), l.Text)
-			}
-		}
-		if _, err := devcontainer.New(r).Up(cmd.Context(), sink, devcontainer.UpOpts{
-			WorkspaceFolder: c.Folder,
-			ConfigPath:      c.ConfigPath,
-		}); err != nil {
+		if err := dcUp(cmd, r, c, verbosity); err != nil {
 			return err
 		}
 	}
 
-	opts := devcontainer.ExecOpts{WorkspaceFolder: c.Folder, ConfigPath: c.ConfigPath}
-
 	// One-shot command: no tmux, stream in the current terminal.
 	if len(runCmd) > 0 {
-		argv := devcontainer.ExecArgs(opts, runCmd...)
+		argv := devcontainer.ExecArgs(devcontainer.ExecOpts{
+			WorkspaceFolder: c.Folder,
+			ConfigPath:      c.ConfigPath,
+		}, runCmd...)
 		if dryRun {
 			fmt.Fprintln(cmd.OutOrStdout(), strings.Join(argv, " "))
 			return nil
@@ -195,11 +230,7 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 		return ex.Run()
 	}
 
-	chain := dcClaudeChain
-	if shell {
-		chain = dcShellFallback
-	}
-	launch := devcontainer.ExecArgs(opts, "sh", "-lc", chain)
+	launch := dcLaunchArgs(c, shell)
 	if dryRun {
 		fmt.Fprintln(cmd.OutOrStdout(), strings.Join(launch, " "))
 		return nil
@@ -217,51 +248,15 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 		}
 	}
 
-	grid := dcTmuxSession + ":" + dcGridWindow
-	panes, err := tm.ListPanes(ctx, grid)
+	paneID, err := dcShow(ctx, tm, c, launch, !noSidebar)
 	if err != nil {
 		return err
 	}
-	if dcFindPane(panes, c) == "" {
-		windows, err := tm.ListWindows(ctx, dcTmuxSession)
-		if err != nil {
-			return err
-		}
-		gridExists, legacy := false, ""
-		for _, w := range windows {
-			if w.Name == dcGridWindow {
-				gridExists = true
-			}
-			if w.Name == c.Name {
-				legacy = dcTmuxSession + ":" + w.Name
-			}
-		}
-		switch {
-		case legacy != "" && gridExists:
-			// A pre-grid window for this devcontainer: absorb it as a pane so
-			// whatever runs in it (a live claude) survives the migration.
-			err = tm.JoinPane(ctx, legacy, grid)
-		case legacy != "":
-			// The legacy window becomes the grid.
-			err = tm.RenameWindow(ctx, legacy, dcGridWindow)
-		case gridExists:
-			_, err = tm.SplitWindow(ctx, grid, c.Folder, launch)
-		default:
-			_, err = tm.NewWindow(ctx, dcTmuxSession, dcGridWindow, c.Folder, launch)
-		}
-		if err != nil {
-			return err
-		}
-		if panes, err = tm.ListPanes(ctx, grid); err != nil {
-			return err
-		}
-		// Two or more panes tile automatically — the requested grid.
-		_ = tm.SelectLayout(ctx, grid, "tiled")
-	}
 
+	grid := dcTmuxSession + ":" + dcGridWindow
 	_ = tm.SelectWindow(ctx, grid)
-	if id := dcFindPane(panes, c); id != "" {
-		_ = tm.SelectPane(ctx, id)
+	if paneID != "" {
+		_ = tm.SelectPane(ctx, paneID)
 	}
 
 	if tmux.InTmux() {
@@ -272,34 +267,169 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 	return ex.Run()
 }
 
-// dcFindPane returns the id of the grid pane belonging to the candidate, keyed
-// by the pane's start command (stable — programs may rewrite pane titles).
-// Legacy panes adopted via join/rename match too: their start command carries
-// the same --workspace-folder/--config pair.
-func dcFindPane(panes []tmux.Pane, c dcCandidate) string {
-	for _, p := range panes {
-		if strings.Contains(p.StartCommand, "--workspace-folder "+c.Folder) &&
-			strings.Contains(p.StartCommand, "--config "+c.ConfigPath) {
+// dcShow makes the candidate's pane the one displayed in the main window's
+// right slot (Orca-style master-detail): the selected claude fills the right
+// side while the others keep running in parked background windows, and picking
+// another one swap-panes it into view. Legacy layouts need no special-casing —
+// pre-grid windows and grid leftovers are just panes found session-wide.
+func dcShow(ctx context.Context, tm tmux.Tmux, c dcCandidate, launch []string, withSidebar bool) (string, error) {
+	main := dcTmuxSession + ":" + dcGridWindow
+	all, err := tm.ListAllPanes(ctx, dcTmuxSession)
+	if err != nil {
+		return "", err
+	}
+	target := dcFindPane(all, c)
+	mainPanes, err := tm.ListPanes(ctx, main)
+	if err != nil {
+		return "", err
+	}
+
+	if len(mainPanes) == 0 {
+		// No main window yet.
+		if target != "" {
+			// Promote the pane's window (a parked or legacy one) to main. Panes
+			// sharing that window are carved out first so it holds exactly one.
+			if len(windowMates(all, target)) > 1 {
+				if err := tm.BreakPane(ctx, target); err != nil {
+					return "", err
+				}
+			}
+			if err := tm.RenameWindow(ctx, target, dcGridWindow); err != nil {
+				return "", err
+			}
+		} else if _, err := tm.NewWindow(ctx, dcTmuxSession, dcGridWindow, c.Folder, launch); err != nil {
+			return "", err
+		}
+	} else {
+		shown := dcShownPane(mainPanes)
+		switch {
+		case target == "" && shown == "":
+			if _, err := tm.SplitWindowRight(ctx, main, c.Folder, launch); err != nil {
+				return "", err
+			}
+		case target == "":
+			// Create parked, then swap into view — the old one parks itself.
+			id, err := tm.NewBackgroundWindow(ctx, dcTmuxSession, "dc-"+c.Name, c.Folder, launch)
+			if err != nil {
+				return "", err
+			}
+			if err := tm.SwapPane(ctx, id, shown); err != nil {
+				return "", err
+			}
+		case target == shown, dcPaneIn(mainPanes, target):
+			// Already displayed (or a grid leftover in the main window — the
+			// parking sweep below keeps it and parks the rest).
+		case shown == "":
+			if err := tm.JoinPaneRight(ctx, target, main); err != nil {
+				return "", err
+			}
+		default:
+			if err := tm.SwapPane(ctx, target, shown); err != nil {
+				return "", err
+			}
+		}
+	}
+
+	// Park any extra claude panes still in the main window (grid leftovers).
+	if mainPanes, err = tm.ListPanes(ctx, main); err != nil {
+		return "", err
+	}
+	displayed := dcFindPane(mainPanes, c)
+	for _, p := range mainPanes {
+		if p.ID != displayed && strings.Contains(p.StartCommand, "--workspace-folder ") {
+			_ = tm.BreakPane(ctx, p.ID)
+		}
+	}
+
+	if withSidebar && dcSidebarPane(mainPanes) == "" {
+		if exe, err := executablePath(); err == nil {
+			// Best effort — a missing sidebar must not block the attach.
+			_, _ = tm.SplitWindowLeft(ctx, main, dcSidebarWidth, []string{exe, "dc", "sidebar"})
+		}
+	}
+	return displayed, nil
+}
+
+// windowMates returns the panes sharing a window with the given pane.
+func windowMates(all []tmux.Pane, id string) []tmux.Pane {
+	var win string
+	for _, p := range all {
+		if p.ID == id {
+			win = p.WindowID
+		}
+	}
+	var out []tmux.Pane
+	for _, p := range all {
+		if p.WindowID == win {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// dcShownPane returns the first devcontainer pane in the main window — the
+// "displayed" slot of the master-detail layout.
+func dcShownPane(mainPanes []tmux.Pane) string {
+	for _, p := range mainPanes {
+		if strings.Contains(p.StartCommand, "--workspace-folder ") {
 			return p.ID
 		}
 	}
 	return ""
 }
 
-// dcAttached returns the grid's panes and the names of weft/dc windows (legacy
-// pre-grid layout); tmux being down or the session missing simply yields none.
-func dcAttached(cmd *cobra.Command, r sysexec.Runner) ([]tmux.Pane, map[string]bool) {
-	tm := tmux.New(r)
-	panes, _ := tm.ListPanes(cmd.Context(), dcTmuxSession+":"+dcGridWindow)
-	ws, err := tm.ListWindows(cmd.Context(), dcTmuxSession)
+func dcPaneIn(panes []tmux.Pane, id string) bool {
+	for _, p := range panes {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// dcSidebarPane returns the sidebar pane's id, if present.
+func dcSidebarPane(panes []tmux.Pane) string {
+	for _, p := range panes {
+		if strings.Contains(p.StartCommand, "dc sidebar") {
+			return p.ID
+		}
+	}
+	return ""
+}
+
+// dcPaneFor returns the pane belonging to the candidate, keyed by the pane's
+// start command (stable — programs may rewrite pane titles). Panes from any
+// weft version match: the start command always carries the same
+// --workspace-folder/--config pair.
+func dcPaneFor(panes []tmux.Pane, c dcCandidate) *tmux.Pane {
+	for i, p := range panes {
+		if strings.Contains(p.StartCommand, "--workspace-folder "+c.Folder) &&
+			strings.Contains(p.StartCommand, "--config "+c.ConfigPath) {
+			return &panes[i]
+		}
+	}
+	return nil
+}
+
+// dcFindPane returns the candidate's pane id, or "".
+func dcFindPane(panes []tmux.Pane, c dcCandidate) string {
+	if p := dcPaneFor(panes, c); p != nil {
+		return p.ID
+	}
+	return ""
+}
+
+// dcScan discovers every devcontainer on the machine and marks attachment
+// state: pane anywhere in the session, displayed in the main window, or dead.
+func dcScan(ctx context.Context, r sysexec.Runner) ([]dcCandidate, error) {
+	cs, err := dockerx.New(r).Ps(ctx, "devcontainer.local_folder")
 	if err != nil {
-		return panes, nil
+		return nil, err
 	}
-	names := make(map[string]bool, len(ws))
-	for _, w := range ws {
-		names[w.Name] = true
-	}
-	return panes, names
+	tm := tmux.New(r)
+	all, _ := tm.ListAllPanes(ctx, dcTmuxSession)
+	mainPanes, _ := tm.ListPanes(ctx, dcTmuxSession+":"+dcGridWindow)
+	return dcCandidates(cs, all, mainPanes), nil
 }
 
 // splitAtDash separates "[query] -- cmd..." using cobra's dash position.
@@ -312,9 +442,8 @@ func splitAtDash(args []string, dash int) (query, runCmd []string) {
 
 // dcCandidates converts labelled containers into display candidates, keeping
 // one entry per (folder, config) pair and preferring a running container over
-// a stopped leftover for the same devcontainer. A candidate is marked attached
-// when it has a grid pane or a legacy (pre-grid) window.
-func dcCandidates(cs []dockerx.Container, panes []tmux.Pane, windows map[string]bool) []dcCandidate {
+// a stopped leftover for the same devcontainer.
+func dcCandidates(cs []dockerx.Container, all, mainPanes []tmux.Pane) []dcCandidate {
 	byKey := map[string]dcCandidate{}
 	var keys []string
 	for _, c := range cs {
@@ -327,7 +456,11 @@ func dcCandidates(cs []dockerx.Container, panes []tmux.Pane, windows map[string]
 			ContainerName: c.Names,
 			State:         c.State,
 		}
-		cand.HasWindow = windows[name] || dcFindPane(panes, cand) != ""
+		if p := dcPaneFor(all, cand); p != nil {
+			cand.HasWindow = true
+			cand.PaneDead = p.Dead
+			cand.Shown = dcFindPane(mainPanes, cand) != ""
+		}
 		key := cand.Folder + "\x00" + cand.ConfigPath
 		prev, seen := byKey[key]
 		if !seen {
