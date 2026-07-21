@@ -115,6 +115,7 @@ func TestDcDryRun(t *testing.T) {
 			"--config /u/client2/holiday/.devcontainer/oasys-ui/devcontainer.json",
 			`PATH="$HOME/.local/bin:$PATH"`,
 			"command -v claude",
+			"curl -fsSL https://claude.ai/install.sh",
 			"claude --continue || claude",
 			"exec zsh -l",
 		} {

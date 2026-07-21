@@ -28,15 +28,19 @@ const dcTmuxSession = "weft/dc"
 // dcShellFallback picks the best interactive shell available in the container.
 const dcShellFallback = `exec zsh -l 2>/dev/null || exec bash -l 2>/dev/null || exec sh -l`
 
-// dcClaudeChain resumes the container's last claude conversation, falls back
-// to a fresh claude, and to a plain shell (with an install hint) when claude
-// is not installed. ~/.local/bin is prepended because the native installer
-// puts claude there but only teaches interactive shells about it.
+// dcClaudeChain resumes the container's last claude conversation. When claude
+// is not installed (containers lose it on rebuild) it installs the native
+// build into ~/.local/bin first — user-scoped, one-time per container — and
+// only drops to a shell if that fails. ~/.local/bin is prepended because the
+// installer only teaches interactive shells about it.
 const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
+	`if ! command -v claude >/dev/null 2>&1; then ` +
+	`echo "weft: claude not found in this container — installing (one-time)…"; ` +
+	`mkdir -p "$HOME/.local" 2>/dev/null; ` +
+	`curl -fsSL https://claude.ai/install.sh | bash; fi; ` +
 	`if command -v claude >/dev/null 2>&1; then claude --continue || claude; else ` +
-	`echo "weft: claude is not installed in this container."; ` +
-	`echo "  install it with: curl -fsSL https://claude.ai/install.sh | bash"; ` +
-	`echo "  (dropping to a shell)"; ` +
+	`echo "weft: claude install failed — dropping to a shell."; ` +
+	`echo "  try manually: curl -fsSL https://claude.ai/install.sh | bash"; ` +
 	dcShellFallback + `; fi`
 
 // dcCandidate is one devcontainer discovered from docker's standard identity

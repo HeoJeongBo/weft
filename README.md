@@ -138,11 +138,13 @@ weft dc gantry --start   # bring a stopped devcontainer up first
 
 Picking a devcontainer opens (or reuses) a window in the dedicated tmux session
 `weft/dc` whose foreground runs **claude inside that container, resuming its last
-conversation** (`claude --continue`, falling back to a fresh claude, then to a shell
-when claude is not installed in the image). Each picked devcontainer gets its own
-window, so one terminal drives them all: switch with `prefix+n`/`p` or just run
-`weft dc` again — entries marked `*` already have a window. Detach with `prefix+d`;
-the claudes keep running in tmux.
+conversation** (`claude --continue`, falling back to a fresh claude). If claude is
+not installed in the container — rebuilds wipe it — weft installs the native build
+into `~/.local/bin` first (user-scoped, one-time per container) and only drops to a
+shell if that fails. Each picked devcontainer gets its own window, so one terminal
+drives them all: switch with `prefix+n`/`p` or just run `weft dc` again — entries
+marked `*` already have a window. Detach with `prefix+d`; the claudes keep running
+in tmux.
 
 Note: a claude already running in another terminal (e.g. a VS Code panel) cannot be
 adopted — its process belongs to that terminal. `--continue` resumes the same
