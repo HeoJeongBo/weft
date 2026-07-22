@@ -34,7 +34,10 @@ func newDcSidebarCmd() *cobra.Command {
 }
 
 type (
-	sbScanMsg   struct{ cands []dcCandidate }
+	sbScanMsg struct {
+		cands []dcCandidate
+		err   error
+	}
 	sbUsageMsg  struct{ sum usage.Summary }
 	sbScanTick  struct{}
 	sbUsageTick struct{}
@@ -55,6 +58,8 @@ type sidebarModel struct {
 	selKey string // identity of the item under the cursor (survives re-sorts)
 	sum    usage.Summary
 	status string
+	width  int
+	height int
 }
 
 func dcKey(c dcCandidate) string { return c.Folder + "\x00" + c.ConfigPath }
@@ -69,8 +74,8 @@ func (m sidebarModel) Init() tea.Cmd {
 
 func (m sidebarModel) scanCmd() tea.Cmd {
 	return func() tea.Msg {
-		cands, _ := dcScan(m.ctx, m.r)
-		return sbScanMsg{cands}
+		cands, err := dcScan(m.ctx, m.r)
+		return sbScanMsg{cands: cands, err: err}
 	}
 }
 
@@ -90,7 +95,19 @@ func sbAfter(d time.Duration, msg tea.Msg) tea.Cmd {
 
 func (m sidebarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
 	case sbScanMsg:
+		if msg.err != nil {
+			// Keep showing the last-known list; vanishing entries would read
+			// as "my devcontainers are gone" when docker just hiccuped.
+			m.status = "docker unreachable"
+			return m, sbAfter(3*time.Second, sbScanTick{})
+		}
+		if m.status == "docker unreachable" {
+			m.status = ""
+		}
 		m.items = msg.cands
 		// The list re-sorts every scan: keep the cursor on the same item by
 		// identity; on the first scan land on the displayed (▶) one.
@@ -209,13 +226,44 @@ func (m sidebarModel) close(c dcCandidate) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(m.scanCmd(), sbAfter(3*time.Second, sbClearMsg{}))
 }
 
+// listWindow returns the visible slice bounds of the item list given the pane
+// height: the header and the usage/hint tail are always reserved, and the
+// window slides to keep the cursor visible.
+func (m sidebarModel) listWindow() (start, end int) {
+	const reserved = 2 + 6 + 3 + 2 // header, usage block, hints, status slack
+	avail := len(m.items)
+	if m.height > 0 {
+		if v := m.height - reserved; v < avail {
+			avail = max(3, v)
+		}
+	}
+	if avail >= len(m.items) {
+		return 0, len(m.items)
+	}
+	start = m.cursor - avail/2
+	start = min(max(start, 0), len(m.items)-avail)
+	return start, start + avail
+}
+
+func (m sidebarModel) nameWidth() int {
+	if m.width > 10 {
+		return min(m.width-8, 40)
+	}
+	return 20
+}
+
 func (m sidebarModel) View() tea.View {
 	var b strings.Builder
 	b.WriteString(colorize("weft", ansiCyan, true) + " " + colorize("devcontainers", ansiDim, true) + "\n\n")
 	if len(m.items) == 0 {
 		b.WriteString(colorize("  scanning…", ansiDim, true) + "\n")
 	}
-	for i, c := range m.items {
+	start, end := m.listWindow()
+	if start > 0 {
+		b.WriteString(colorize(fmt.Sprintf("  ↑ %d more", start), ansiDim, true) + "\n")
+	}
+	for i := start; i < end; i++ {
+		c := m.items[i]
 		glyph := colorize("○", ansiDim, true)
 		if c.State == "running" {
 			glyph = colorize("●", ansiGreen, true)
@@ -233,13 +281,16 @@ func (m sidebarModel) View() tea.View {
 			// claude rewrites the pane title while it is working.
 			marker += colorize("✳", ansiYellow, true)
 		}
-		name := truncate(c.Label, 20)
+		name := truncate(c.Label, m.nameWidth())
 		prefix := "  "
 		if i == m.cursor {
 			prefix = colorize("❯ ", ansiCyan, true)
 			name = colorize(name, ansiCyan, true)
 		}
 		b.WriteString(prefix + glyph + " " + name + marker + "\n")
+	}
+	if end < len(m.items) {
+		b.WriteString(colorize(fmt.Sprintf("  ↓ %d more", len(m.items)-end), ansiDim, true) + "\n")
 	}
 
 	t, w := m.sum.Today, m.sum.Week

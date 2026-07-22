@@ -42,6 +42,7 @@ type Pane struct {
 type Tmux interface {
 	HasSession(ctx context.Context, session string) (bool, error)
 	NewSession(ctx context.Context, session, startDir string) error
+	NewSessionWithWindow(ctx context.Context, session, window, startDir string, cmd []string) error
 	NewWindow(ctx context.Context, session, name, startDir string, cmd []string) (id string, err error)
 	ListWindows(ctx context.Context, session string) ([]Window, error)
 	ListPanes(ctx context.Context, target string) ([]Pane, error)
@@ -100,6 +101,21 @@ func (e *Exec) NewSession(ctx context.Context, session, startDir string) error {
 	args := []string{"new-session", "-d", "-s", session}
 	if startDir != "" {
 		args = append(args, "-c", startDir)
+	}
+	_, err := e.r.Mutate(ctx, "tmux", args...)
+	return err
+}
+
+// NewSessionWithWindow creates a detached session whose first window is named
+// and runs cmd — no stray default-shell window.
+func (e *Exec) NewSessionWithWindow(ctx context.Context, session, window, startDir string, cmd []string) error {
+	args := []string{"new-session", "-d", "-s", session, "-n", window}
+	if startDir != "" {
+		args = append(args, "-c", startDir)
+	}
+	if len(cmd) > 0 {
+		args = append(args, "--")
+		args = append(args, cmd...)
 	}
 	_, err := e.r.Mutate(ctx, "tmux", args...)
 	return err

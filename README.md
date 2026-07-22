@@ -20,31 +20,33 @@ macOS (primary), plus these on your `PATH`:
 
 - **git**, **tmux**
 - **Docker** (Docker Desktop, OrbStack, or colima) — a running daemon
-- **Node.js** + the **Dev Container CLI**: `npm install -g @devcontainers/cli`
-- The **Claude Code** CLI
+- **Node.js** (only because the Dev Container CLI needs it) + the **Dev Container CLI**: `npm install -g @devcontainers/cli`
+- The **Claude Code** CLI *(optional on the host — `weft dc` installs claude inside each container)*
 
 Run `weft doctor` to verify everything at once.
 
 ## Install
 
 ```sh
-brew install HeoJeongBo/tap/weft   # once the Homebrew tap is published
+brew install HeoJeongBo/tap/weft
 ```
 
-Until then (or for local development), build from source:
+Or build from source: `git clone https://github.com/HeoJeongBo/weft && cd weft && make install`
 
-```sh
-git clone https://github.com/HeoJeongBo/weft && cd weft && make install
-```
+## Quick start — already have devcontainers?
 
-Then verify and launch:
+No config needed. From any directory:
 
 ```sh
 weft doctor      # check the environment
-weft             # open the dashboard  (weft --help prints a styled command reference)
+weft dc          # scan every devcontainer on the machine → pick → claude appears
+weft dc token    # one-time: mint a login token so containers never ask again
 ```
 
-## Quick start
+`weft dc` finds anything the devcontainer CLI or VS Code ever started and drives them
+all from a single terminal — see [Orchestrate any devcontainer](#orchestrate-any-devcontainer-from-one-terminal).
+
+## Quick start — weft-managed sessions
 
 ```sh
 cd your-project            # a git repo with a .devcontainer/
@@ -61,6 +63,8 @@ Or just run `weft` and drive everything from the dashboard.
 
 | Command                     | What it does                                                    |
 | --------------------------- | --------------------------------------------------------------- |
+| `weft dc [query]`           | scan every devcontainer on the machine and attach (`--shell`, `-- cmd…`) |
+| `weft dc token`             | mint a long-lived claude login token for all containers         |
 | `weft new <name>`           | worktree + devcontainer + tmux window + claude, in one motion   |
 | `weft ls`                   | list sessions with live, reconciled status (`--json`)           |
 | `weft status <name>`        | detailed status of a single session                             |

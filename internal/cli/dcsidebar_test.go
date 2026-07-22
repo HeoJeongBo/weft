@@ -244,6 +244,73 @@ func TestSidebarAttachError(t *testing.T) {
 	}
 }
 
+func TestSidebarScanErrorKeepsList(t *testing.T) {
+	m := sbModel(t, dcTmuxState{})
+	m, _ = sbUpdate(t, m, m.scanCmd()().(sbScanMsg))
+	before := len(m.items)
+	if before == 0 {
+		t.Fatal("fixture produced no items")
+	}
+	m, cmd := sbUpdate(t, m, sbScanMsg{err: fmt.Errorf("docker down")})
+	if len(m.items) != before || m.status != "docker unreachable" || cmd == nil {
+		t.Errorf("items=%d status=%q", len(m.items), m.status)
+	}
+	// A successful scan clears the transient status.
+	m, _ = sbUpdate(t, m, sbScanMsg{cands: m.items})
+	if m.status != "" {
+		t.Errorf("status not cleared: %q", m.status)
+	}
+}
+
+func TestSidebarScrollWindow(t *testing.T) {
+	m := sbModel(t, dcTmuxState{})
+	for i := 0; i < 12; i++ {
+		m.items = append(m.items, dcCandidate{Name: fmt.Sprintf("c%02d", i), Label: fmt.Sprintf("c%02d", i), Folder: fmt.Sprintf("/f/%d", i)})
+	}
+
+	// Without a size the whole list renders.
+	if s, e := m.listWindow(); s != 0 || e != 12 {
+		t.Errorf("no-size window = %d,%d", s, e)
+	}
+
+	m, _ = sbUpdate(t, m, tea.WindowSizeMsg{Width: 30, Height: 18}) // avail = 5
+	m.cursor = 0
+	v := m.View().Content
+	if !strings.Contains(v, "↓ 7 more") || strings.Contains(v, "↑ 7 more") {
+		t.Errorf("top window markers wrong:\n%s", v)
+	}
+	m.cursor = 11
+	if s, e := m.listWindow(); s != 7 || e != 12 {
+		t.Errorf("bottom window = %d,%d", s, e)
+	}
+	if v := m.View().Content; !strings.Contains(v, "↑ 7 more") {
+		t.Errorf("bottom marker missing:\n%s", v)
+	}
+	m.cursor = 6
+	if v := m.View().Content; !strings.Contains(v, "↑ 4 more") || !strings.Contains(v, "↓ 3 more") {
+		t.Errorf("middle markers missing:\n%s", v)
+	}
+
+	// Tiny heights clamp to a minimum window of 3.
+	m, _ = sbUpdate(t, m, tea.WindowSizeMsg{Width: 30, Height: 5})
+	if s, e := m.listWindow(); e-s != 3 {
+		t.Errorf("tiny window = %d,%d", s, e)
+	}
+
+	// Name width follows the pane width.
+	if w := m.nameWidth(); w != 22 {
+		t.Errorf("nameWidth(30) = %d", w)
+	}
+	m.width = 0
+	if w := m.nameWidth(); w != 20 {
+		t.Errorf("nameWidth(0) = %d", w)
+	}
+	m.width = 100
+	if w := m.nameWidth(); w != 40 {
+		t.Errorf("nameWidth(100) = %d", w)
+	}
+}
+
 func TestSidebarClose(t *testing.T) {
 	st := dcTmuxState{
 		all:  dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),

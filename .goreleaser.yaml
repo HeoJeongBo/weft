@@ -50,6 +50,9 @@ homebrew_casks:
     homepage: "https://github.com/HeoJeongBo/weft"
     description: "Orchestrate parallel Claude Code sessions across git worktrees + devcontainers"
     license: "MIT"
+    # Without the tap token the cask upload is skipped instead of failing the
+    # whole release; push the cask manually (or set HOMEBREW_TAP_TOKEN).
+    skip_upload: '{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}'
     dependencies:
       - formula: tmux
       - formula: git
@@ -59,7 +62,11 @@ homebrew_casks:
 
         npm install -g @devcontainers/cli
 
-      Run `weft doctor` to verify your environment.
+      Then the whole happy path is:
+
+        weft doctor    # verify the environment
+        weft dc        # scan devcontainers -> pick -> claude appears
+        weft dc token  # one-time: containers stop asking to log in
     # The binary is unsigned; strip the quarantine flag so Gatekeeper allows it.
     hooks:
       post:

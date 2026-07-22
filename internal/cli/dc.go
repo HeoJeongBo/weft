@@ -57,15 +57,19 @@ const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
 	`export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/weft-oauth-token")"; else ` +
 	`echo "weft tip: run 'weft dc token' once — containers then skip the login screen"; fi; ` +
 	`if ! command -v claude >/dev/null 2>&1; then ` +
-	`echo "weft: claude not found in this container — installing (one-time)…"; ` +
 	// Some images create ~/.local as root during build, which blocks the
 	// user-scoped installer after every rebuild; reclaim it when sudo allows.
 	`mkdir -p "$HOME/.local/share" 2>/dev/null; ` +
 	`[ -w "$HOME/.local/share" ] || sudo -n chown -R "$(id -u)" "$HOME/.local" 2>/dev/null; ` +
-	`curl -fsSL https://claude.ai/install.sh | bash; fi; ` +
+	// Retry on flaky networks instead of stranding the pane in a shell.
+	`while ! command -v claude >/dev/null 2>&1; do ` +
+	`echo "weft: installing claude (one-time per container)…"; ` +
+	`curl -fsSL --retry 3 https://claude.ai/install.sh | bash; ` +
+	`command -v claude >/dev/null 2>&1 && break; ` +
+	`printf "weft: install failed — Enter to retry, s+Enter for a shell: "; ` +
+	`read -r a; [ "$a" = s ] && break; ` +
+	`done; fi; ` +
 	`if command -v claude >/dev/null 2>&1; then claude --continue || claude; else ` +
-	`echo "weft: claude install failed — dropping to a shell."; ` +
-	`echo "  try manually: curl -fsSL https://claude.ai/install.sh | bash"; ` +
 	dcShellFallback + `; fi`
 
 // dcCandidate is one devcontainer discovered from docker's standard identity
@@ -138,6 +142,9 @@ func runDc(cmd *cobra.Command, args []string, start, shell, noSidebar bool) erro
 	for {
 		cands, err := dcScan(cmd.Context(), r)
 		if err != nil {
+			if !dockerx.New(r).DaemonUp(cmd.Context()) {
+				return fmt.Errorf("docker daemon isn't reachable — start Docker Desktop, OrbStack, or colima")
+			}
 			return err
 		}
 		matches := matchDc(cands, q)
@@ -162,7 +169,7 @@ func runDc(cmd *cobra.Command, args []string, start, shell, noSidebar bool) erro
 			}
 			if len(matches) > 1 {
 				printDcTable(cmd.OutOrStdout(), matches, colorEnabled(cmd))
-				return fmt.Errorf("%d devcontainers match %q — be more specific", len(matches), q)
+				return fmt.Errorf("%d devcontainers match %q — be more specific (queries also match the workspace path)", len(matches), q)
 			}
 			chosen = matches[0]
 		default:
@@ -251,7 +258,11 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 		return err
 	}
 	if !has {
-		if err := tm.NewSession(ctx, dcTmuxSession, c.Folder); err != nil {
+		// Create the session with the grid window running the launch directly —
+		// no stray default-shell window. A concurrent weft dc may have won the
+		// race; "duplicate session" just means it exists now.
+		err := tm.NewSessionWithWindow(ctx, dcTmuxSession, dcGridWindow, c.Folder, launch)
+		if err != nil && !strings.Contains(err.Error(), "duplicate session") {
 			return err
 		}
 	}
@@ -269,6 +280,20 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 	if err != nil {
 		return err
 	}
+	// GC leftovers from older versions: a session window holding a single bare
+	// shell with no start command (the pre-v0.8 default window).
+	if all, err := tm.ListAllPanes(ctx, dcTmuxSession); err == nil {
+		byWin := map[string][]tmux.Pane{}
+		for _, p := range all {
+			byWin[p.WindowID] = append(byWin[p.WindowID], p)
+		}
+		for win, ps := range byWin {
+			if len(ps) == 1 && ps[0].StartCommand == "" && dcBareShell(ps[0].Command) {
+				_ = tm.KillWindow(ctx, win)
+			}
+		}
+	}
+
 	// Make the focused pane obvious.
 	_ = tm.SetWindowOption(ctx, grid, "pane-active-border-style", "fg=cyan,bold")
 	_ = tm.SetWindowOption(ctx, grid, "pane-border-style", "fg=colour240")
@@ -374,8 +399,8 @@ func dcShow(ctx context.Context, tm tmux.Tmux, c dcCandidate, launch []string, w
 		}
 		if p.Dead {
 			_ = tm.KillPane(ctx, p.ID) // no point parking a corpse
-		} else {
-			_ = tm.BreakPane(ctx, p.ID)
+		} else if err := tm.BreakPane(ctx, p.ID); err == nil {
+			_ = tm.RenameWindow(ctx, p.ID, "dc-"+dcParkName(p.StartCommand))
 		}
 	}
 
@@ -394,6 +419,32 @@ func dcShow(ctx context.Context, tm tmux.Tmux, c dcCandidate, launch []string, w
 		}
 	}
 	return displayed, nil
+}
+
+// dcParkName derives a parked window's name from a pane's start command.
+func dcParkName(startCmd string) string {
+	const key = "--workspace-folder "
+	i := strings.Index(startCmd, key)
+	if i < 0 {
+		return "pane"
+	}
+	rest := startCmd[i+len(key):]
+	if j := strings.Index(rest, " --"); j >= 0 {
+		rest = rest[:j]
+	}
+	if rest = strings.TrimSpace(rest); rest == "" {
+		return "pane"
+	}
+	return filepath.Base(rest)
+}
+
+// dcBareShell reports whether cmd is a plain login shell.
+func dcBareShell(cmd string) bool {
+	switch cmd {
+	case "zsh", "bash", "sh", "fish":
+		return true
+	}
+	return false
 }
 
 // windowMates returns the panes sharing a window with the given pane.

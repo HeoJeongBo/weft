@@ -208,6 +208,28 @@ func TestDcLabel(t *testing.T) {
 	}
 }
 
+func TestDcParkNameAndBareShell(t *testing.T) {
+	cases := map[string]string{
+		"devcontainer exec --workspace-folder /u/x/holiday --config /c sh": "holiday",
+		"no marker here":            "pane",
+		"x --workspace-folder ":     "pane",
+		"e --workspace-folder /u/y": "y",
+	}
+	for in, want := range cases {
+		if got := dcParkName(in); got != want {
+			t.Errorf("dcParkName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, s := range []string{"zsh", "bash", "sh", "fish"} {
+		if !dcBareShell(s) {
+			t.Errorf("dcBareShell(%q) = false", s)
+		}
+	}
+	if dcBareShell("node") {
+		t.Error("dcBareShell(node) = true")
+	}
+}
+
 func TestDcDryRun(t *testing.T) {
 	t.Run("claude chain", func(t *testing.T) {
 		out, _, err := runCLI(t, dcHandler(dcFixture(), dcTmuxState{}), "", "dc", "oasys-ui", "--dry-run")
@@ -223,7 +245,8 @@ func TestDcDryRun(t *testing.T) {
 			"CLAUDE_CODE_OAUTH_TOKEN",
 			"command -v claude",
 			"sudo -n chown",
-			"curl -fsSL https://claude.ai/install.sh",
+			"curl -fsSL --retry 3 https://claude.ai/install.sh",
+			"Enter to retry",
 			"claude --continue || claude",
 			"exec zsh -l",
 		} {
@@ -273,10 +296,10 @@ func TestDcShowFlows(t *testing.T) {
 		if _, _, err := runCLI(t, h, "", "dc", "oasys-ui"); err != nil {
 			t.Fatal(err)
 		}
-		nw := recorded(lines, "new-window")
-		for _, want := range []string{"-n grid", "claude --continue || claude", "--workspace-folder /u/client2/holiday"} {
-			if !strings.Contains(nw, want) {
-				t.Errorf("new-window missing %q: %q", want, nw)
+		ns := recorded(lines, "new-session")
+		for _, want := range []string{"-s weft/dc", "-n grid", "claude --continue || claude"} {
+			if !strings.Contains(ns, want) {
+				t.Errorf("new-session missing %q: %q", want, ns)
 			}
 		}
 		if sb := recorded(lines, "split-window -hbf"); !strings.Contains(sb, "dc sidebar") {
@@ -493,8 +516,44 @@ func TestDcShowFlows(t *testing.T) {
 		if bp := recorded(lines, "break-pane"); !strings.Contains(bp, "-s %3") {
 			t.Errorf("break-pane = %q", bp)
 		}
+		if rn := recorded(lines, "rename-window -t %3"); !strings.Contains(rn, "dc-holiday") {
+			t.Errorf("park rename = %q", rn)
+		}
 		if sp := recorded(lines, "swap-pane"); sp != "" {
 			t.Errorf("unexpected swap-pane: %q", sp)
+		}
+	})
+
+	t.Run("duplicate session race is tolerated", func(t *testing.T) {
+		captureExec(t)
+		inner := dcHandler(dcFixture(), dcTmuxState{
+			all:  dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+			main: dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+		})
+		h := func(c sysexec.Call) (sysexec.Result, error) {
+			if strings.Contains(c.Line(), "new-session") {
+				return sysexec.Result{ExitCode: 1}, fmt.Errorf("duplicate session: weft/dc")
+			}
+			return inner(c)
+		}
+		if _, _, err := runCLI(t, h, "", "dc", "oasys-ui"); err != nil {
+			t.Fatalf("duplicate session should be tolerated, got %v", err)
+		}
+	})
+
+	t.Run("junk shell window is garbage collected", func(t *testing.T) {
+		captureExec(t)
+		junk := "%9\x1f@9\x1f0\x1ftitle\x1fzsh\x1f\n"
+		st := dcTmuxState{
+			all:  dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2") + junk,
+			main: dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+		}
+		h, lines := recording(dcHandler(dcFixture(), st))
+		if _, _, err := runCLI(t, h, "", "dc", "oasys-ui"); err != nil {
+			t.Fatal(err)
+		}
+		if kw := recorded(lines, "kill-window"); !strings.Contains(kw, "-t @9") {
+			t.Errorf("junk window not collected: %q", kw)
 		}
 	})
 
@@ -668,12 +727,25 @@ func TestDcErrors(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 	})
-	t.Run("docker error", func(t *testing.T) {
+	t.Run("docker daemon down", func(t *testing.T) {
 		h := func(c sysexec.Call) (sysexec.Result, error) {
 			return sysexec.Result{ExitCode: 1}, cmdErr(c, 1)
 		}
-		if _, _, err := runCLI(t, h, "", "dc"); err == nil {
-			t.Fatal("want docker error")
+		_, _, err := runCLI(t, h, "", "dc")
+		if err == nil || !strings.Contains(err.Error(), "docker daemon isn't reachable") {
+			t.Fatalf("want friendly daemon error, got %v", err)
+		}
+	})
+	t.Run("docker ps error with daemon up", func(t *testing.T) {
+		h := func(c sysexec.Call) (sysexec.Result, error) {
+			if strings.Contains(c.Line(), "docker info") {
+				return sysexec.Result{Stdout: "29.0.0"}, nil
+			}
+			return sysexec.Result{ExitCode: 1}, cmdErr(c, 1)
+		}
+		_, _, err := runCLI(t, h, "", "dc")
+		if err == nil || strings.Contains(err.Error(), "daemon isn't reachable") {
+			t.Fatalf("want raw ps error, got %v", err)
 		}
 	})
 	t.Run("two queries", func(t *testing.T) {

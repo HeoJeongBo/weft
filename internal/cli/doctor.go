@@ -52,9 +52,60 @@ func runChecks(ctx context.Context) []checkResult {
 		binCheck(ctx, "docker", true, "install Docker Desktop, OrbStack, or colima", "--version"),
 		dockerDaemonCheck(ctx),
 		binCheck(ctx, "devcontainer", true, "npm install -g @devcontainers/cli", "--version"),
-		binCheck(ctx, "claude", true, "install the Claude Code CLI: https://claude.com/claude-code", "--version"),
+		// weft dc installs claude inside each container; a host install is only
+		// needed to run claude directly on the host (exec_in_container: false).
+		binCheck(ctx, "claude", false, "only needed on the host — weft dc installs claude in-container", "--version"),
 		binCheck(ctx, "node", false, "install Node.js (required by the Dev Container CLI)", "--version"),
+		tokenCheck(),
+		devcontainerScanCheck(ctx),
 	}
+}
+
+// tokenCheck reports whether the long-lived auth token from `weft dc token`
+// exists, so containers skip the per-container OAuth login.
+func tokenCheck() checkResult {
+	r := checkResult{Name: "dc token", Required: false, Hint: "run `weft dc token` once so containers skip the login screen"}
+	home, err := userHomeDir()
+	if err != nil {
+		r.Detail = "cannot resolve home"
+		return r
+	}
+	if _, err := os.Stat(home + "/.claude/weft-oauth-token"); err != nil {
+		r.Detail = "not set up"
+		return r
+	}
+	r.OK = true
+	r.Detail = "present"
+	return r
+}
+
+// devcontainerScanCheck reports how many devcontainers the dc label scan sees.
+func devcontainerScanCheck(ctx context.Context) checkResult {
+	r := checkResult{Name: "devcontainers", Required: false, Hint: "open one in your editor or run `devcontainer up`"}
+	if _, err := lookPath("docker"); err != nil {
+		r.Detail = "docker not installed"
+		return r
+	}
+	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	out, err := runCommand(cctx, "docker", "ps", "-a", "--filter", "label=devcontainer.local_folder", "--format", "{{.ID}}")
+	if err != nil {
+		r.Detail = "daemon not reachable"
+		return r
+	}
+	n := 0
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			n++
+		}
+	}
+	if n == 0 {
+		r.Detail = "none found"
+		return r
+	}
+	r.OK = true
+	r.Detail = fmt.Sprintf("%d found (weft dc)", n)
+	return r
 }
 
 // Seams so doctor's environment probing can be scripted in tests.

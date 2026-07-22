@@ -29,6 +29,9 @@ func NewRootCmd() *cobra.Command {
 		Long: logo + "\n\n" + `weft weaves git worktrees, devcontainers, tmux, and Claude Code into one
 motion, and gives you a dashboard over every parallel session.
 
+"weft dc" needs no setup at all: it finds every devcontainer on the machine
+(VS Code's included) and orchestrates their claudes from one terminal.
+
 Run "weft" with no arguments to open the dashboard, or use the subcommands to
 script the same actions.`,
 		SilenceUsage:  true,

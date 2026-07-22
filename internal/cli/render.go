@@ -81,7 +81,7 @@ func claudeCell(c domain.ClaudeState) string {
 // printSessionsTable renders the reconciled session list.
 func printSessionsTable(w io.Writer, sessions []domain.Session, color bool) {
 	if len(sessions) == 0 {
-		fmt.Fprintln(w, "no sessions yet — create one with: weft new <name>")
+		fmt.Fprintln(w, "no sessions yet — create one with `weft new <name>`, or `weft dc` to attach to any devcontainer")
 		return
 	}
 	// The colored glyph has visible width 1; padded plain columns follow, so the

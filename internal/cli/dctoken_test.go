@@ -12,6 +12,54 @@ import (
 	"github.com/HeoJeongBo/weft/internal/sysexec"
 )
 
+func TestDoctorDcChecks(t *testing.T) {
+	t.Run("token states", func(t *testing.T) {
+		claudeDir := stubHome(t)
+		if r := tokenCheck(); r.OK || r.Detail != "not set up" {
+			t.Errorf("absent token = %+v", r)
+		}
+		if err := os.WriteFile(filepath.Join(claudeDir, "weft-oauth-token"), []byte("t\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if r := tokenCheck(); !r.OK || r.Detail != "present" {
+			t.Errorf("present token = %+v", r)
+		}
+		saved := userHomeDir
+		userHomeDir = func() (string, error) { return "", fmt.Errorf("no home") }
+		t.Cleanup(func() { userHomeDir = saved })
+		if r := tokenCheck(); r.OK || r.Detail != "cannot resolve home" {
+			t.Errorf("no-home token = %+v", r)
+		}
+	})
+
+	t.Run("devcontainer scan states", func(t *testing.T) {
+		ctx := context.Background()
+		savedLP, savedRC := lookPath, runCommand
+		t.Cleanup(func() { lookPath, runCommand = savedLP, savedRC })
+
+		lookPath = func(string) (string, error) { return "", fmt.Errorf("nope") }
+		if r := devcontainerScanCheck(ctx); r.OK || r.Detail != "docker not installed" {
+			t.Errorf("no docker = %+v", r)
+		}
+
+		lookPath = func(string) (string, error) { return "/usr/bin/docker", nil }
+		runCommand = func(context.Context, string, ...string) ([]byte, error) { return nil, fmt.Errorf("down") }
+		if r := devcontainerScanCheck(ctx); r.OK || r.Detail != "daemon not reachable" {
+			t.Errorf("daemon down = %+v", r)
+		}
+
+		runCommand = func(context.Context, string, ...string) ([]byte, error) { return []byte("\n"), nil }
+		if r := devcontainerScanCheck(ctx); r.OK || r.Detail != "none found" {
+			t.Errorf("none = %+v", r)
+		}
+
+		runCommand = func(context.Context, string, ...string) ([]byte, error) { return []byte("a\nb\n"), nil }
+		if r := devcontainerScanCheck(ctx); !r.OK || r.Detail != "2 found (weft dc)" {
+			t.Errorf("two = %+v", r)
+		}
+	})
+}
+
 func TestDcToken(t *testing.T) {
 	t.Run("mints and saves the token", func(t *testing.T) {
 		claudeDir := stubHome(t)
@@ -51,8 +99,31 @@ func TestDcToken(t *testing.T) {
 
 	t.Run("no running match", func(t *testing.T) {
 		_, _, err := runCLI(t, dcHandler(dcFixture(), dcTmuxState{}), "", "dc", "token", "gantry")
-		if err == nil || !strings.Contains(err.Error(), "no running devcontainer") {
+		if err == nil || !strings.Contains(err.Error(), "weft dc gantry --start") {
 			t.Fatalf("got %v", err)
+		}
+	})
+
+	t.Run("no running at all", func(t *testing.T) {
+		exitedOnly := dcPsLine("gantry_devcontainer-dev-1", "exited", "/u/gantry", "/u/gantry/.devcontainer/devcontainer.json")
+		_, _, err := runCLI(t, dcHandler(exitedOnly, dcTmuxState{}), "", "dc", "token")
+		if err == nil || !strings.Contains(err.Error(), "no running devcontainers") {
+			t.Fatalf("got %v", err)
+		}
+	})
+
+	t.Run("existing token is announced", func(t *testing.T) {
+		claudeDir := stubHome(t)
+		if err := os.WriteFile(filepath.Join(claudeDir, "weft-oauth-token"), []byte("old\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		captureExec(t)
+		_, stderr, err := runCLI(t, dcHandler(dcFixture(), dcTmuxState{}), "new-token\n", "dc", "token", "oasys-ui")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(stderr, "already exists") {
+			t.Errorf("stderr missing replace notice:\n%s", stderr)
 		}
 	})
 

@@ -39,13 +39,22 @@ func runDcToken(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(running) == 0 {
-		return fmt.Errorf("no running devcontainer matches %q — start one first", q)
+		if q == "" {
+			return fmt.Errorf("no running devcontainers — start one first (weft dc <name> --start) and retry")
+		}
+		return fmt.Errorf("no running devcontainer matches %q — start it first (weft dc %s --start)", q, q)
 	}
 	if len(running) > 1 {
 		printDcTable(cmd.OutOrStdout(), running, colorEnabled(cmd))
 		return fmt.Errorf("%d running devcontainers match — pick one by name", len(running))
 	}
 	c := running[0]
+
+	if home, err := userHomeDir(); err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".claude", "weft-oauth-token")); err == nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "note: a token already exists — completing this flow replaces it")
+		}
+	}
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "%s claude setup-token (%s) — complete the browser authorization\n",
 		colorize("▶", ansiCyan, colorEnabled(cmd)), c.Name)
