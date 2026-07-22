@@ -250,13 +250,20 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 	// Let claude's "c to copy" reach the terminal clipboard: tmux's default
 	// set-clipboard=external drops OSC 52 sequences coming from applications.
 	_ = tm.SetServerOption(ctx, "set-clipboard", "on")
+	// Show a reversed ^B badge in the status line while the prefix is armed —
+	// feedback for users who don't live in tmux.
+	_ = tm.SetSessionOption(ctx, dcTmuxSession, "status-left", "#{?client_prefix,#[reverse] ^B #[default] ,}[weft] ")
+	_ = tm.SetSessionOption(ctx, dcTmuxSession, "status-left-length", "20")
 
+	grid := dcTmuxSession + ":" + dcGridWindow
 	paneID, err := dcShow(ctx, tm, c, launch, !noSidebar)
 	if err != nil {
 		return err
 	}
+	// Make the focused pane obvious.
+	_ = tm.SetWindowOption(ctx, grid, "pane-active-border-style", "fg=cyan,bold")
+	_ = tm.SetWindowOption(ctx, grid, "pane-border-style", "fg=colour240")
 
-	grid := dcTmuxSession + ":" + dcGridWindow
 	_ = tm.SelectWindow(ctx, grid)
 	if paneID != "" {
 		_ = tm.SelectPane(ctx, paneID)
@@ -344,10 +351,18 @@ func dcShow(ctx context.Context, tm tmux.Tmux, c dcCandidate, launch []string, w
 		}
 	}
 
-	if withSidebar && dcSidebarPane(mainPanes) == "" {
-		if exe, err := executablePath(); err == nil {
-			// Best effort — a missing sidebar must not block the attach.
-			_, _ = tm.SplitWindowLeft(ctx, main, dcSidebarWidth, []string{exe, "dc", "sidebar"})
+	if withSidebar {
+		sb := dcSidebarPane(mainPanes)
+		if sb == "" {
+			if exe, err := executablePath(); err == nil {
+				// Best effort — a missing sidebar must not block the attach.
+				sb, _ = tm.SplitWindowLeft(ctx, main, dcSidebarWidth, []string{exe, "dc", "sidebar"})
+			}
+		}
+		if sb != "" {
+			// Pane churn (a claude exiting, swaps) makes tmux redistribute
+			// widths; pin the sidebar back to its column every time.
+			_ = tm.ResizePane(ctx, sb, dcSidebarWidth)
 		}
 	}
 	return displayed, nil

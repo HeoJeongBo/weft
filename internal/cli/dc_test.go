@@ -268,6 +268,15 @@ func TestDcShowFlows(t *testing.T) {
 		if so := recorded(lines, "set-option"); !strings.Contains(so, "-s set-clipboard on") {
 			t.Errorf("set-clipboard not enabled: %q", so)
 		}
+		if sl := recorded(lines, "status-left "); !strings.Contains(sl, "client_prefix") {
+			t.Errorf("prefix badge not set: %q", sl)
+		}
+		if bs := recorded(lines, "pane-active-border-style"); !strings.Contains(bs, "-w -t weft/dc:grid") {
+			t.Errorf("active border style = %q", bs)
+		}
+		if rz := recorded(lines, "resize-pane"); !strings.Contains(rz, "-x 30") {
+			t.Errorf("sidebar width not pinned: %q", rz)
+		}
 		if got := strings.Join((*calls)[0], " "); got != "tmux attach-session -t weft/dc" {
 			t.Errorf("attach argv = %q", got)
 		}

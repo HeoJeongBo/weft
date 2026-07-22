@@ -51,8 +51,11 @@ type Tmux interface {
 	SwapPane(ctx context.Context, src, dst string) error
 	JoinPaneRight(ctx context.Context, src, dst string) error
 	BreakPane(ctx context.Context, src string) error
+	ResizePane(ctx context.Context, target string, width int) error
 	KillPane(ctx context.Context, target string) error
 	SetServerOption(ctx context.Context, name, value string) error
+	SetSessionOption(ctx context.Context, session, name, value string) error
+	SetWindowOption(ctx context.Context, target, name, value string) error
 	KillWindow(ctx context.Context, target string) error
 	KillSession(ctx context.Context, session string) error
 	SelectWindow(ctx context.Context, target string) error
@@ -227,6 +230,12 @@ func (e *Exec) BreakPane(ctx context.Context, src string) error {
 	return err
 }
 
+// ResizePane sets the pane's width in columns.
+func (e *Exec) ResizePane(ctx context.Context, target string, width int) error {
+	_, err := e.r.Mutate(ctx, "tmux", "resize-pane", "-t", target, "-x", strconv.Itoa(width))
+	return err
+}
+
 // KillPane kills the pane identified by target ("%id" or full target).
 func (e *Exec) KillPane(ctx context.Context, target string) error {
 	_, err := e.r.Mutate(ctx, "tmux", "kill-pane", "-t", target)
@@ -236,6 +245,18 @@ func (e *Exec) KillPane(ctx context.Context, target string) error {
 // SetServerOption sets a tmux server option (e.g. set-clipboard on).
 func (e *Exec) SetServerOption(ctx context.Context, name, value string) error {
 	_, err := e.r.Mutate(ctx, "tmux", "set-option", "-s", name, value)
+	return err
+}
+
+// SetSessionOption sets an option on one session (e.g. status-left).
+func (e *Exec) SetSessionOption(ctx context.Context, session, name, value string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "set-option", "-t", session, name, value)
+	return err
+}
+
+// SetWindowOption sets a window option (e.g. pane border styles).
+func (e *Exec) SetWindowOption(ctx context.Context, target, name, value string) error {
+	_, err := e.r.Mutate(ctx, "tmux", "set-option", "-w", "-t", target, name, value)
 	return err
 }
 
