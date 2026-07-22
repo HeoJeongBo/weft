@@ -53,8 +53,9 @@ const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
 	`cp "$HOME/.claude.json" "$HOME/.claude/.claude.json" 2>/dev/null; fi; ` +
 	// A long-lived token minted by `weft dc token` lives in the shared mount
 	// and spares the per-container OAuth login.
-	`[ -f "$HOME/.claude/weft-oauth-token" ] && ` +
-	`export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/weft-oauth-token")"; ` +
+	`if [ -f "$HOME/.claude/weft-oauth-token" ]; then ` +
+	`export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/weft-oauth-token")"; else ` +
+	`echo "weft tip: run 'weft dc token' once — containers then skip the login screen"; fi; ` +
 	`if ! command -v claude >/dev/null 2>&1; then ` +
 	`echo "weft: claude not found in this container — installing (one-time)…"; ` +
 	// Some images create ~/.local as root during build, which blocks the
@@ -71,7 +72,8 @@ const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
 // labels (devcontainer.local_folder / devcontainer.config_file), which the
 // devcontainer CLI and VS Code stamp on every container they create.
 type dcCandidate struct {
-	Name          string // display name derived from the config location
+	Name          string // name derived from the config location
+	Label         string // display name; disambiguated when Name collides
 	Folder        string // devcontainer.local_folder (workspace on the host)
 	ConfigPath    string // devcontainer.config_file
 	ContainerName string
@@ -79,6 +81,7 @@ type dcCandidate struct {
 	HasWindow     bool   // an attached pane exists somewhere in weft/dc
 	Shown         bool   // that pane is the one displayed in the main window
 	PaneDead      bool   // the pane exists but its process has died
+	PaneTitle     string // the pane's terminal title (claude's live status)
 }
 
 func newDcCmd() *cobra.Command {
@@ -90,14 +93,19 @@ func newDcCmd() *cobra.Command {
 standard devcontainer.local_folder docker label, then orchestrate them from a
 single terminal.
 
-On a terminal, "weft dc" opens a picker: enter attaches a pane in the "grid"
-window of tmux session weft/dc, running claude inside that container and
-resuming its last conversation (a stopped devcontainer is brought up first; a
-missing claude is installed). Every picked devcontainer becomes another pane,
-auto-tiled from the second one on, with a sidebar listing containers and
-usage on the left. Rerunning weft dc focuses the pane you pick. --shell opens
-a shell pane instead of claude; append "-- cmd..." for a one-shot command
-without tmux. Works outside git repositories; piped output prints a table.`,
+The layout is master-detail: a sidebar on the left lists every devcontainer
+(▶ displayed · * running in the background · ✕ pane died) with a token-usage
+summary, and the right side shows one claude at a time, resuming that
+container's last conversation. Everything else keeps running in parked
+background windows; selecting — in the sidebar (↑↓/jk + enter, x closes,
+r rescans) or by rerunning "weft dc [query]" — swaps the displayed pane.
+Leave the screen anytime with Ctrl-b then d; run "weft dc token" once so
+freshly built containers skip the login screen.
+
+A stopped devcontainer is brought up first and a missing claude is installed
+automatically. --shell opens a shell pane instead of claude; append
+"-- cmd..." for a one-shot command without tmux. Works outside git
+repositories; piped output prints a plain table.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDc(cmd, args, start, shell, noSidebar)
 		},
@@ -254,6 +262,7 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 	// feedback for users who don't live in tmux.
 	_ = tm.SetSessionOption(ctx, dcTmuxSession, "status-left", "#{?client_prefix,#[reverse] ^B #[default] ,}[weft] ")
 	_ = tm.SetSessionOption(ctx, dcTmuxSession, "status-left-length", "20")
+	_ = tm.SetSessionOption(ctx, dcTmuxSession, "status-right", "^B d = back to terminal ")
 
 	grid := dcTmuxSession + ":" + dcGridWindow
 	paneID, err := dcShow(ctx, tm, c, launch, !noSidebar)
@@ -263,6 +272,9 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 	// Make the focused pane obvious.
 	_ = tm.SetWindowOption(ctx, grid, "pane-active-border-style", "fg=cyan,bold")
 	_ = tm.SetWindowOption(ctx, grid, "pane-border-style", "fg=colour240")
+	// Keep dead panes around (marked ✕ in the sidebar) instead of collapsing
+	// the layout — selecting one respawns its claude in place.
+	_ = tm.SetWindowOption(ctx, grid, "remain-on-exit", "on")
 
 	_ = tm.SelectWindow(ctx, grid)
 	if paneID != "" {
@@ -288,7 +300,18 @@ func dcShow(ctx context.Context, tm tmux.Tmux, c dcCandidate, launch []string, w
 	if err != nil {
 		return "", err
 	}
-	target := dcFindPane(all, c)
+	target := ""
+	if p := dcPaneFor(all, c); p != nil {
+		target = p.ID
+		if p.Dead {
+			// The container was rebuilt (or claude exited abnormally): restart
+			// the chain in place — it reinstalls claude and resumes the
+			// conversation — instead of focusing a corpse.
+			if err := tm.RespawnPane(ctx, p.ID, launch); err != nil {
+				return "", err
+			}
+		}
+	}
 	mainPanes, err := tm.ListPanes(ctx, main)
 	if err != nil {
 		return "", err
@@ -346,7 +369,12 @@ func dcShow(ctx context.Context, tm tmux.Tmux, c dcCandidate, launch []string, w
 	}
 	displayed := dcFindPane(mainPanes, c)
 	for _, p := range mainPanes {
-		if p.ID != displayed && strings.Contains(p.StartCommand, "--workspace-folder ") {
+		if p.ID == displayed || !strings.Contains(p.StartCommand, "--workspace-folder ") {
+			continue
+		}
+		if p.Dead {
+			_ = tm.KillPane(ctx, p.ID) // no point parking a corpse
+		} else {
 			_ = tm.BreakPane(ctx, p.ID)
 		}
 	}
@@ -477,6 +505,7 @@ func dcCandidates(cs []dockerx.Container, all, mainPanes []tmux.Pane) []dcCandid
 		if p := dcPaneFor(all, cand); p != nil {
 			cand.HasWindow = true
 			cand.PaneDead = p.Dead
+			cand.PaneTitle = p.Title
 			cand.Shown = dcFindPane(mainPanes, cand) != ""
 		}
 		key := cand.Folder + "\x00" + cand.ConfigPath
@@ -494,13 +523,43 @@ func dcCandidates(cs []dockerx.Container, all, mainPanes []tmux.Pane) []dcCandid
 	for _, k := range keys {
 		out = append(out, byKey[k])
 	}
+	dcLabel(out)
 	sort.SliceStable(out, func(i, j int) bool {
 		if (out[i].State == "running") != (out[j].State == "running") {
 			return out[i].State == "running"
 		}
-		return out[i].Name < out[j].Name
+		return out[i].Label < out[j].Label
 	})
 	return out
+}
+
+// dcLabel fills display labels, suffixing a distinguishing folder segment when
+// several candidates share a name (two checkouts of the same repo). The label
+// is also matchable as a query.
+func dcLabel(cands []dcCandidate) {
+	count := map[string]int{}
+	for _, c := range cands {
+		count[c.Name]++
+	}
+	baseDup := map[string]int{}
+	for _, c := range cands {
+		if count[c.Name] > 1 {
+			baseDup[c.Name+"\x00"+filepath.Base(c.Folder)]++
+		}
+	}
+	for i, c := range cands {
+		cands[i].Label = c.Name
+		if count[c.Name] <= 1 {
+			continue
+		}
+		hint := filepath.Base(c.Folder)
+		if baseDup[c.Name+"\x00"+hint] > 1 {
+			// Folder basenames collide too (…/client/holiday vs
+			// …/client2/holiday) — use the parent directory instead.
+			hint = filepath.Base(filepath.Dir(c.Folder))
+		}
+		cands[i].Label = c.Name + " (" + hint + ")"
+	}
 }
 
 // dcName derives a human name: the config's directory name (e.g.
@@ -519,7 +578,7 @@ func matchDc(cands []dcCandidate, q string) []dcCandidate {
 	q = strings.ToLower(q)
 	var out []dcCandidate
 	for _, c := range cands {
-		if strings.Contains(strings.ToLower(c.Name), q) ||
+		if strings.Contains(strings.ToLower(c.Label), q) ||
 			strings.Contains(strings.ToLower(c.Folder), q) ||
 			strings.Contains(strings.ToLower(c.ContainerName), q) {
 			out = append(out, c)
@@ -532,7 +591,7 @@ func dcItems(cands []dcCandidate) []tui.DcItem {
 	items := make([]tui.DcItem, len(cands))
 	for i, c := range cands {
 		items[i] = tui.DcItem{
-			Name:      c.Name,
+			Name:      c.Label,
 			Container: c.ContainerName,
 			Workspace: c.Folder,
 			State:     c.State,
@@ -549,7 +608,7 @@ func printDcTable(w io.Writer, cands []dcCandidate, color bool) {
 		if c.State == "running" {
 			glyph, code = "●", ansiGreen
 		}
-		name := c.Name
+		name := c.Label
 		if c.HasWindow {
 			name += "*"
 		}

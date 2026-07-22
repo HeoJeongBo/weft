@@ -82,8 +82,29 @@ func TestSidebarScanAndNavigation(t *testing.T) {
 		t.Errorf("cursor past top = %d", m.cursor)
 	}
 
-	// A rescan with fewer items clamps the cursor.
+	// A fresh model's first scan lands the cursor on the displayed item.
+	shownSt := dcTmuxState{
+		all:  dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+		main: dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+	}
+	fresh := sbModel(t, shownSt)
+	fresh, _ = sbUpdate(t, fresh, fresh.scanCmd()().(sbScanMsg))
+	if !fresh.items[fresh.cursor].Shown {
+		t.Errorf("first scan cursor not on shown item (cursor=%d)", fresh.cursor)
+	}
+
+	// A rescan that re-orders the list keeps the cursor on the same item.
+	m, _ = sbUpdate(t, m, sbKey("j")) // cursor 1, selKey set
+	moved := append([]dcCandidate{}, m.items...)
+	moved[0], moved[1] = moved[1], moved[0]
+	m, _ = sbUpdate(t, m, sbScanMsg{cands: moved})
+	if dcKey(m.items[m.cursor]) != m.selKey {
+		t.Errorf("cursor lost its item after re-sort: cursor=%d selKey=%q", m.cursor, m.selKey)
+	}
+
+	// A rescan whose list no longer contains the tracked item clamps the cursor.
 	m.cursor = 2
+	m.selKey = "gone\x00gone"
 	m, _ = sbUpdate(t, m, sbScanMsg{cands: m.items[:1]})
 	if m.cursor != 0 {
 		t.Errorf("cursor after shrink = %d", m.cursor)
@@ -165,15 +186,30 @@ func TestSidebarAttach(t *testing.T) {
 		t.Errorf("status not cleared: %q", m.status)
 	}
 
-	// Enter on a stopped item: hint, no attach.
+	// Enter on a stopped item: brings it up asynchronously, then attaches.
 	for i, c := range m.items {
 		if c.Name == "gantry" {
 			m.cursor = i
 		}
 	}
-	m, _ = sbUpdate(t, m, sbKey("enter"))
-	if !strings.Contains(m.status, "--start") {
-		t.Errorf("stopped status = %q", m.status)
+	var upCmd tea.Cmd
+	m, upCmd = sbUpdate(t, m, sbKey("enter"))
+	if !strings.Contains(m.status, "starting") || upCmd == nil {
+		t.Fatalf("stopped status = %q", m.status)
+	}
+	done, ok := upCmd().(sbUpDoneMsg)
+	if !ok || done.err != nil {
+		t.Fatalf("up msg = %#v", done)
+	}
+	m, _ = sbUpdate(t, m, done)
+	if !strings.Contains(m.status, "gantry") {
+		t.Errorf("post-up status = %q", m.status)
+	}
+
+	// A failed up surfaces the error.
+	m, _ = sbUpdate(t, m, sbUpDoneMsg{cand: m.items[m.cursor], err: fmt.Errorf("boom")})
+	if !strings.Contains(m.status, "start failed") {
+		t.Errorf("failed-up status = %q", m.status)
 	}
 
 	// Enter with empty list is a no-op.
@@ -296,14 +332,14 @@ func TestSidebarView(t *testing.T) {
 	}
 
 	m.items = []dcCandidate{
-		{Name: "shown", State: "running", HasWindow: true, Shown: true},
-		{Name: "parked", State: "running", HasWindow: true},
-		{Name: "deadpane", State: "running", HasWindow: true, PaneDead: true},
-		{Name: "plain", State: "exited"},
+		{Name: "shown", Label: "shown", State: "running", HasWindow: true, Shown: true},
+		{Name: "parked", Label: "parked", State: "running", HasWindow: true, PaneTitle: "✳ thinking"},
+		{Name: "deadpane", Label: "deadpane", State: "running", HasWindow: true, PaneDead: true},
+		{Name: "plain", Label: "plain (alt)", State: "exited"},
 	}
 	m.status = "hello status"
 	v := m.View().Content
-	for _, want := range []string{"▶", "*", "✕", "shown", "usage", "today", "7d", "hello status", "attach", "/usage"} {
+	for _, want := range []string{"▶", "*", "✕", "✳", "shown", "plain (alt)", "usage", "today", "7d", "hello status", "attach", "/usage"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("view missing %q:\n%s", want, v)
 		}

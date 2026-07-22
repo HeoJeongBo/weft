@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/HeoJeongBo/weft/internal/devcontainer"
 	"github.com/HeoJeongBo/weft/internal/sysexec"
 	"github.com/HeoJeongBo/weft/internal/tmux"
 	"github.com/HeoJeongBo/weft/internal/usage"
@@ -38,6 +39,10 @@ type (
 	sbScanTick  struct{}
 	sbUsageTick struct{}
 	sbClearMsg  struct{}
+	sbUpDoneMsg struct {
+		cand dcCandidate
+		err  error
+	}
 )
 
 // sidebarModel is the Orca-style left rail: the devcontainer list on top and a
@@ -47,9 +52,12 @@ type sidebarModel struct {
 	r      sysexec.Runner
 	items  []dcCandidate
 	cursor int
+	selKey string // identity of the item under the cursor (survives re-sorts)
 	sum    usage.Summary
 	status string
 }
+
+func dcKey(c dcCandidate) string { return c.Folder + "\x00" + c.ConfigPath }
 
 func newSidebarModel(ctx context.Context, r sysexec.Runner) sidebarModel {
 	return sidebarModel{ctx: ctx, r: r}
@@ -84,6 +92,22 @@ func (m sidebarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sbScanMsg:
 		m.items = msg.cands
+		// The list re-sorts every scan: keep the cursor on the same item by
+		// identity; on the first scan land on the displayed (▶) one.
+		if m.selKey == "" {
+			for i, c := range m.items {
+				if c.Shown {
+					m.cursor = i
+					m.selKey = dcKey(c)
+				}
+			}
+		} else {
+			for i, c := range m.items {
+				if dcKey(c) == m.selKey {
+					m.cursor = i
+				}
+			}
+		}
 		if m.cursor >= len(m.items) {
 			m.cursor = max(0, len(m.items)-1)
 		}
@@ -98,15 +122,25 @@ func (m sidebarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sbClearMsg:
 		m.status = ""
 		return m, nil
+	case sbUpDoneMsg:
+		if msg.err != nil {
+			m.status = "start failed: " + msg.err.Error()
+			return m, tea.Batch(m.scanCmd(), sbAfter(5*time.Second, sbClearMsg{}))
+		}
+		started := msg.cand
+		started.State = "running"
+		return m.attach(started)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				m.selKey = dcKey(m.items[m.cursor])
 			}
 		case "down", "j":
 			if m.cursor < len(m.items)-1 {
 				m.cursor++
+				m.selKey = dcKey(m.items[m.cursor])
 			}
 		case "enter":
 			if len(m.items) > 0 {
@@ -126,11 +160,20 @@ func (m sidebarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // attach ensures the selected devcontainer's pane and focuses it. The sidebar
-// always runs inside the grid window, so focusing is just select-pane.
+// always runs inside the grid window, so focusing is just select-pane. A
+// stopped devcontainer is brought up first (asynchronously — up can take a
+// while) and attached when done.
 func (m sidebarModel) attach(c dcCandidate) (tea.Model, tea.Cmd) {
 	if c.State != "running" {
-		m.status = c.Name + " is " + c.State + " — run: weft dc " + c.Name + " --start"
-		return m, sbAfter(5*time.Second, sbClearMsg{})
+		m.status = "starting " + c.Label + "…"
+		up := func() tea.Msg {
+			_, err := devcontainer.New(m.r).Up(m.ctx, nil, devcontainer.UpOpts{
+				WorkspaceFolder: c.Folder,
+				ConfigPath:      c.ConfigPath,
+			})
+			return sbUpDoneMsg{cand: c, err: err}
+		}
+		return m, up
 	}
 	tm := tmux.New(m.r)
 	paneID, err := dcShow(m.ctx, tm, c, dcLaunchArgs(c, false), true)
@@ -141,7 +184,7 @@ func (m sidebarModel) attach(c dcCandidate) (tea.Model, tea.Cmd) {
 	if paneID != "" {
 		_ = tm.SelectPane(m.ctx, paneID)
 	}
-	m.status = "→ " + c.Name
+	m.status = "→ " + c.Label
 	return m, tea.Batch(m.scanCmd(), sbAfter(3*time.Second, sbClearMsg{}))
 }
 
@@ -186,7 +229,11 @@ func (m sidebarModel) View() tea.View {
 		case c.HasWindow:
 			marker = " " + colorize("*", ansiDim, true)
 		}
-		name := truncate(c.Name, 20)
+		if !c.PaneDead && c.HasWindow && strings.Contains(c.PaneTitle, "✳") {
+			// claude rewrites the pane title while it is working.
+			marker += colorize("✳", ansiYellow, true)
+		}
+		name := truncate(c.Label, 20)
 		prefix := "  "
 		if i == m.cursor {
 			prefix = colorize("❯ ", ansiCyan, true)
@@ -206,6 +253,7 @@ func (m sidebarModel) View() tea.View {
 	if m.status != "" {
 		b.WriteString("\n" + colorize(m.status, ansiYellow, true) + "\n")
 	}
-	b.WriteString("\n" + colorize("jk move · ⏎ attach · x close · q quit", ansiDim, true) + "\n")
+	b.WriteString("\n" + colorize("↑↓ move · ⏎ attach · x close", ansiDim, true) + "\n")
+	b.WriteString(colorize("^B d leave · ✳ working", ansiDim, true) + "\n")
 	return tea.NewView(b.String())
 }

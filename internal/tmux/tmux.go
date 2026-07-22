@@ -28,11 +28,12 @@ type Window struct {
 
 // Pane is one entry of `tmux list-panes`. StartCommand is the command the pane
 // was created with — a stable identifier that survives programs rewriting the
-// pane title.
+// pane title; Title is that (rewritable) title, useful as a live status signal.
 type Pane struct {
 	ID           string // "%N"
 	WindowID     string // "@N"
 	Dead         bool
+	Title        string // terminal title set by the program (e.g. claude's status)
 	Command      string // current foreground command
 	StartCommand string
 }
@@ -51,6 +52,7 @@ type Tmux interface {
 	SwapPane(ctx context.Context, src, dst string) error
 	JoinPaneRight(ctx context.Context, src, dst string) error
 	BreakPane(ctx context.Context, src string) error
+	RespawnPane(ctx context.Context, target string, cmd []string) error
 	ResizePane(ctx context.Context, target string, width int) error
 	KillPane(ctx context.Context, target string) error
 	SetServerOption(ctx context.Context, name, value string) error
@@ -135,9 +137,10 @@ func (e *Exec) ListWindows(ctx context.Context, session string) ([]Window, error
 	return parseWindows(res.Stdout), nil
 }
 
-// paneFormat is shared by the pane listings; the start command comes last so
-// embedded tabs cannot shift the fixed fields.
-const paneFormat = "#{pane_id}\t#{window_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_start_command}"
+// paneFormat is shared by the pane listings. Fields are separated by the unit
+// separator (0x1f) — titles and start commands are program-controlled text
+// that may contain tabs — and the start command comes last as a catch-all.
+const paneFormat = "#{pane_id}\x1f#{window_id}\x1f#{pane_dead}\x1f#{pane_title}\x1f#{pane_current_command}\x1f#{pane_start_command}"
 
 // ListPanes lists panes of the target window. It returns an empty slice when
 // the session or window does not exist.
@@ -230,6 +233,17 @@ func (e *Exec) BreakPane(ctx context.Context, src string) error {
 	return err
 }
 
+// RespawnPane restarts a (dead) pane with cmd in place, keeping its position.
+func (e *Exec) RespawnPane(ctx context.Context, target string, cmd []string) error {
+	args := []string{"respawn-pane", "-k", "-t", target}
+	if len(cmd) > 0 {
+		args = append(args, "--")
+		args = append(args, cmd...)
+	}
+	_, err := e.r.Mutate(ctx, "tmux", args...)
+	return err
+}
+
 // ResizePane sets the pane's width in columns.
 func (e *Exec) ResizePane(ctx context.Context, target string, width int) error {
 	_, err := e.r.Mutate(ctx, "tmux", "resize-pane", "-t", target, "-x", strconv.Itoa(width))
@@ -310,11 +324,11 @@ func parsePanes(out string) []Pane {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		f := strings.SplitN(line, "\t", 5)
-		if len(f) < 5 {
+		f := strings.SplitN(line, "\x1f", 6)
+		if len(f) < 6 {
 			continue
 		}
-		ps = append(ps, Pane{ID: f[0], WindowID: f[1], Dead: f[2] == "1", Command: f[3], StartCommand: f[4]})
+		ps = append(ps, Pane{ID: f[0], WindowID: f[1], Dead: f[2] == "1", Title: f[3], Command: f[4], StartCommand: f[5]})
 	}
 	return ps
 }

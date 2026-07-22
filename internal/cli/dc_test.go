@@ -19,15 +19,15 @@ func dcPsLine(name, state, folder, config string) string {
 }
 
 // dcPaneLine mimics a list-panes entry for a pane weft started for the given
-// devcontainer.
+// devcontainer (fields: id, window, dead, title, command, start command).
 func dcPaneLine(id, window, dead, folder, config string) string {
-	return fmt.Sprintf("%s\t%s\t%s\tnode\tdevcontainer exec --workspace-folder %s --config %s sh -lc x\n",
+	return fmt.Sprintf("%s\x1f%s\x1f%s\x1f✳ busy\x1fnode\x1fdevcontainer exec --workspace-folder %s --config %s sh -lc x\n",
 		id, window, dead, folder, config)
 }
 
 // dcSidebarLine mimics the sidebar pane's list-panes entry.
 func dcSidebarLine(id string) string {
-	return id + "\t@1\t0\tweft\t/opt/homebrew/bin/weft dc sidebar\n"
+	return id + "\x1f@1\x1f0\x1fsidebar\x1fweft\x1f/opt/homebrew/bin/weft dc sidebar\n"
 }
 
 const (
@@ -188,6 +188,23 @@ func TestDcCandidateFlags(t *testing.T) {
 	}
 	if !oa.HasWindow || oa.Shown || !oa.PaneDead {
 		t.Errorf("oasys flags = %+v", oa)
+	}
+}
+
+func TestDcLabel(t *testing.T) {
+	cands := []dcCandidate{
+		{Name: "solo", Folder: "/u/solo"},
+		{Name: "oasys", Folder: "/u/client/holiday"},
+		{Name: "oasys", Folder: "/u/client2/holiday"}, // basenames collide -> parent hint
+		{Name: "web", Folder: "/u/a/front"},
+		{Name: "web", Folder: "/u/b/admin"}, // basenames differ -> basename hint
+	}
+	dcLabel(cands)
+	want := []string{"solo", "oasys (client)", "oasys (client2)", "web (front)", "web (admin)"}
+	for i, w := range want {
+		if cands[i].Label != w {
+			t.Errorf("label[%d] = %q, want %q", i, cands[i].Label, w)
+		}
 	}
 }
 
@@ -423,6 +440,42 @@ func TestDcShowFlows(t *testing.T) {
 		}
 	})
 
+	t.Run("dead pane is respawned in place", func(t *testing.T) {
+		captureExec(t)
+		st := dcTmuxState{
+			all:  dcPaneLine("%1", "@1", "1", uiFolder, uiConfig) + dcSidebarLine("%2"),
+			main: dcPaneLine("%1", "@1", "1", uiFolder, uiConfig) + dcSidebarLine("%2"),
+		}
+		h, lines := recording(dcHandler(dcFixture(), st))
+		if _, _, err := runCLI(t, h, "", "dc", "oasys-ui"); err != nil {
+			t.Fatal(err)
+		}
+		rp := recorded(lines, "respawn-pane")
+		if !strings.Contains(rp, "-k -t %1") || !strings.Contains(rp, "claude --continue") {
+			t.Errorf("respawn-pane = %q", rp)
+		}
+	})
+
+	t.Run("dead leftover is killed not parked", func(t *testing.T) {
+		captureExec(t)
+		st := dcTmuxState{
+			all: dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) +
+				dcPaneLine("%3", "@1", "1", oaFolder, oaConfig) + dcSidebarLine("%2"),
+			main: dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) +
+				dcPaneLine("%3", "@1", "1", oaFolder, oaConfig) + dcSidebarLine("%2"),
+		}
+		h, lines := recording(dcHandler(dcFixture(), st))
+		if _, _, err := runCLI(t, h, "", "dc", "oasys-ui"); err != nil {
+			t.Fatal(err)
+		}
+		if kp := recorded(lines, "kill-pane"); !strings.Contains(kp, "-t %3") {
+			t.Errorf("kill-pane = %q", kp)
+		}
+		if bp := recorded(lines, "break-pane"); bp != "" {
+			t.Errorf("dead pane wrongly parked: %q", bp)
+		}
+	})
+
 	t.Run("grid leftovers are parked", func(t *testing.T) {
 		captureExec(t)
 		// The target is the SECOND claude pane in the main window: the first
@@ -529,6 +582,10 @@ func TestDcTmuxErrors(t *testing.T) {
 		{"split-right failure", "oasys-ui", "split-window -h -t", 1, dcTmuxState{all: dcSidebarLine("%2"), main: dcSidebarLine("%2")}},
 		{"join failure", "oasys-ui", "join-pane", 1, dcTmuxState{all: dcSidebarLine("%2") + dcPaneLine("%5", "@3", "0", uiFolder, uiConfig), main: dcSidebarLine("%2")}},
 		{"rename failure", "oasys-ui", "rename-window", 1, dcTmuxState{all: dcPaneLine("%7", "@4", "0", uiFolder, uiConfig)}},
+		{"respawn failure", "oasys-ui", "respawn-pane", 1, dcTmuxState{
+			all:  dcPaneLine("%1", "@1", "1", uiFolder, uiConfig) + dcSidebarLine("%2"),
+			main: dcPaneLine("%1", "@1", "1", uiFolder, uiConfig) + dcSidebarLine("%2"),
+		}},
 		{"promote break failure", "oasys-ui", "break-pane", 1, dcTmuxState{
 			all: dcPaneLine("%7", "@4", "0", uiFolder, uiConfig) + dcPaneLine("%8", "@4", "0", oaFolder, oaConfig),
 		}},
