@@ -59,6 +59,7 @@ type Tmux interface {
 	SetServerOption(ctx context.Context, name, value string) error
 	SetSessionOption(ctx context.Context, session, name, value string) error
 	SetWindowOption(ctx context.Context, target, name, value string) error
+	BindKey(ctx context.Context, table, key string, cmdArgs []string) error
 	KillWindow(ctx context.Context, target string) error
 	KillSession(ctx context.Context, session string) error
 	SelectWindow(ctx context.Context, target string) error
@@ -287,6 +288,13 @@ func (e *Exec) SetSessionOption(ctx context.Context, session, name, value string
 // SetWindowOption sets a window option (e.g. pane border styles).
 func (e *Exec) SetWindowOption(ctx context.Context, target, name, value string) error {
 	_, err := e.r.Mutate(ctx, "tmux", "set-option", "-w", "-t", target, name, value)
+	return err
+}
+
+// BindKey binds key in the given key table to a tmux command.
+func (e *Exec) BindKey(ctx context.Context, table, key string, cmdArgs []string) error {
+	args := append([]string{"bind-key", "-T", table, key}, cmdArgs...)
+	_, err := e.r.Mutate(ctx, "tmux", args...)
 	return err
 }
 

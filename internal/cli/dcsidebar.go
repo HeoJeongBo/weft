@@ -171,6 +171,12 @@ func (m sidebarModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.scanCmd()
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			if n := int(msg.String()[0] - '0'); n <= len(m.items) {
+				m.cursor = n - 1
+				m.selKey = dcKey(m.items[m.cursor])
+				return m.attach(m.items[m.cursor])
+			}
 		}
 	}
 	return m, nil
@@ -281,10 +287,14 @@ func (m sidebarModel) View() tea.View {
 			// claude rewrites the pane title while it is working.
 			marker += colorize("✳", ansiYellow, true)
 		}
+		num := " "
+		if i < 9 {
+			num = string(rune('1' + i))
+		}
 		name := truncate(c.Label, m.nameWidth())
-		prefix := "  "
+		prefix := colorize(num, ansiDim, true) + " "
 		if i == m.cursor {
-			prefix = colorize("❯ ", ansiCyan, true)
+			prefix = colorize(num+" ", ansiCyan, true)
 			name = colorize(name, ansiCyan, true)
 		}
 		b.WriteString(prefix + glyph + " " + name + marker + "\n")
@@ -304,7 +314,7 @@ func (m sidebarModel) View() tea.View {
 	if m.status != "" {
 		b.WriteString("\n" + colorize(m.status, ansiYellow, true) + "\n")
 	}
-	b.WriteString("\n" + colorize("↑↓ move · ⏎ attach · x close", ansiDim, true) + "\n")
+	b.WriteString("\n" + colorize("⌃1-9 switch · ↑↓⏎ · x close", ansiDim, true) + "\n")
 	b.WriteString(colorize("^B d leave · ✳ working", ansiDim, true) + "\n")
 	return tea.NewView(b.String())
 }

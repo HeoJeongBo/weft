@@ -149,6 +149,13 @@ running inside the selected container and resuming its last conversation
 windows; selecting — in the sidebar (`j`/`k` + enter) or by rerunning `weft dc` —
 swaps the displayed pane atomically.
 
+**Switch like browser tabs**: `Ctrl+1`…`Ctrl+9` jumps straight to the n-th
+devcontainer of the sidebar list (numbers are shown) — one chord, no prefix,
+scoped to the weft/dc session so the keys behave normally everywhere else.
+`Ctrl-b 1…9` always works as a fallback, plain digits work when the sidebar is
+focused, and `Option+1…9` joins in if your terminal sends Option as Alt (ghostty:
+`macos-option-as-alt = left`).
+
 If claude is not installed in the container — rebuilds wipe it — weft installs
 the native build into `~/.local/bin` first (user-scoped, one-time per container,
 reclaiming a root-owned `~/.local` via sudo when needed) and only drops to a

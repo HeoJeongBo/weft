@@ -219,6 +219,28 @@ func TestSidebarAttach(t *testing.T) {
 	}
 }
 
+func TestSidebarDigitKeys(t *testing.T) {
+	st := dcTmuxState{
+		all:  dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+		main: dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
+	}
+	m := sbModel(t, st)
+	m, _ = sbUpdate(t, m, m.scanCmd()().(sbScanMsg))
+
+	// "2" selects and attaches the second item directly.
+	m, cmd := sbUpdate(t, m, sbKey("2"))
+	if m.cursor != 1 || cmd == nil || m.status == "" {
+		t.Errorf("digit select: cursor=%d status=%q", m.cursor, m.status)
+	}
+
+	// A digit beyond the list is a no-op.
+	before := m.cursor
+	m, _ = sbUpdate(t, m, sbKey("9"))
+	if m.cursor != before {
+		t.Errorf("out-of-range digit moved cursor to %d", m.cursor)
+	}
+}
+
 func TestSidebarAttachError(t *testing.T) {
 	st := dcTmuxState{
 		all:  dcPaneLine("%1", "@1", "0", uiFolder, uiConfig) + dcSidebarLine("%2"),
@@ -406,7 +428,7 @@ func TestSidebarView(t *testing.T) {
 	}
 	m.status = "hello status"
 	v := m.View().Content
-	for _, want := range []string{"▶", "*", "✕", "✳", "shown", "plain (alt)", "usage", "today", "7d", "hello status", "attach", "/usage"} {
+	for _, want := range []string{"▶", "*", "✕", "✳", "1 ", "shown", "plain (alt)", "usage", "today", "7d", "hello status", "⌃1-9 switch", "/usage"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("view missing %q:\n%s", want, v)
 		}

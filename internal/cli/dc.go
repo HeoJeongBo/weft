@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -117,8 +118,28 @@ repositories; piped output prints a plain table.`,
 	cmd.Flags().BoolVar(&start, "start", false, "bring a stopped devcontainer up before attaching")
 	cmd.Flags().BoolVar(&shell, "shell", false, "open a shell pane instead of claude")
 	cmd.Flags().BoolVar(&noSidebar, "no-sidebar", false, "do not add the sidebar pane to the grid")
-	cmd.AddCommand(newDcSidebarCmd(), newDcTokenCmd())
+	cmd.AddCommand(newDcSidebarCmd(), newDcTokenCmd(), newDcSelectCmd())
 	return cmd
+}
+
+// dcInstallNumberKeys binds Ctrl+1…9 (via extended keys), Option+1…9, and
+// prefix 1…9 to "show devcontainer N" — scoped to the weft/dc session; every
+// other session keeps the key's normal behavior.
+func dcInstallNumberKeys(ctx context.Context, tm tmux.Tmux) {
+	exe, err := executablePath()
+	if err != nil {
+		return // no hotkeys rather than no attach
+	}
+	// Lets ghostty (kitty keyboard protocol) report Ctrl+digit distinctly.
+	_ = tm.SetServerOption(ctx, "extended-keys", "on")
+	const cond = "#{==:#{session_name}," + dcTmuxSession + "}"
+	for d := 1; d <= 9; d++ {
+		n := strconv.Itoa(d)
+		sel := fmt.Sprintf("run-shell -b '%s dc select %s >/dev/null 2>&1'", exe, n)
+		_ = tm.BindKey(ctx, "root", "C-"+n, []string{"if", "-F", cond, sel, "send-keys C-" + n})
+		_ = tm.BindKey(ctx, "root", "M-"+n, []string{"if", "-F", cond, sel, "send-keys M-" + n})
+		_ = tm.BindKey(ctx, "prefix", n, []string{"if", "-F", cond, sel, "select-window -t :=" + n})
+	}
 }
 
 // dcRunner builds the runner for dc commands (which never open a weft project).
@@ -269,6 +290,7 @@ func dcAttach(cmd *cobra.Command, r sysexec.Runner, c dcCandidate, autoStart boo
 	// Let claude's "c to copy" reach the terminal clipboard: tmux's default
 	// set-clipboard=external drops OSC 52 sequences coming from applications.
 	_ = tm.SetServerOption(ctx, "set-clipboard", "on")
+	dcInstallNumberKeys(ctx, tm)
 	// Show a reversed ^B badge in the status line while the prefix is armed —
 	// feedback for users who don't live in tmux.
 	_ = tm.SetSessionOption(ctx, dcTmuxSession, "status-left", "#{?client_prefix,#[reverse] ^B #[default] ,}[weft] ")

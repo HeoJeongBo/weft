@@ -322,6 +322,46 @@ func TestDcShowFlows(t *testing.T) {
 		}
 	})
 
+	t.Run("number keys are bound", func(t *testing.T) {
+		captureExec(t)
+		h, lines := recording(dcHandler(dcFixture(), dcTmuxState{}))
+		if _, _, err := runCLI(t, h, "", "dc", "oasys-ui"); err != nil {
+			t.Fatal(err)
+		}
+		nBind := 0
+		for _, l := range *lines {
+			if strings.Contains(l, "bind-key") {
+				nBind++
+			}
+		}
+		if nBind != 27 { // C-1..9, M-1..9, prefix 1..9
+			t.Errorf("bind-key calls = %d, want 27", nBind)
+		}
+		if b := recorded(lines, "bind-key -T root C-3"); !strings.Contains(b, "dc select 3") || !strings.Contains(b, "send-keys C-3") {
+			t.Errorf("C-3 binding = %q", b)
+		}
+		if b := recorded(lines, "bind-key -T prefix 7"); !strings.Contains(b, "select-window -t :=7") {
+			t.Errorf("prefix 7 binding = %q", b)
+		}
+		if ek := recorded(lines, "extended-keys"); !strings.Contains(ek, "-s extended-keys on") {
+			t.Errorf("extended-keys = %q", ek)
+		}
+	})
+
+	t.Run("exe lookup failure skips bindings", func(t *testing.T) {
+		captureExec(t)
+		saved := executablePath
+		executablePath = func() (string, error) { return "", fmt.Errorf("nope") }
+		t.Cleanup(func() { executablePath = saved })
+		h, lines := recording(dcHandler(dcFixture(), dcTmuxState{}))
+		if _, _, err := runCLI(t, h, "", "dc", "oasys-ui"); err != nil {
+			t.Fatal(err)
+		}
+		if b := recorded(lines, "bind-key"); b != "" {
+			t.Errorf("bindings installed despite exe error: %q", b)
+		}
+	})
+
 	t.Run("no-sidebar skips the sidebar pane", func(t *testing.T) {
 		captureExec(t)
 		h, lines := recording(dcHandler(dcFixture(), dcTmuxState{}))
