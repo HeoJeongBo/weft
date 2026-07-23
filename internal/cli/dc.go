@@ -62,10 +62,14 @@ const dcClaudeChain = `export PATH="$HOME/.local/bin:$PATH"; ` +
 	// user-scoped installer after every rebuild; reclaim it when sudo allows.
 	`mkdir -p "$HOME/.local/share" 2>/dev/null; ` +
 	`[ -w "$HOME/.local/share" ] || sudo -n chown -R "$(id -u)" "$HOME/.local" 2>/dev/null; ` +
-	// Retry on flaky networks instead of stranding the pane in a shell.
+	// Retry on flaky networks instead of stranding the pane in a shell. The
+	// installer stages its download in the config dir — point it at a
+	// container-local path: staging 270MB in the shared ~/.claude mount hits
+	// bind-mount consistency races ("checksum verification failed").
 	`while ! command -v claude >/dev/null 2>&1; do ` +
 	`echo "weft: installing claude (one-time per container)…"; ` +
-	`curl -fsSL --retry 3 https://claude.ai/install.sh | bash; ` +
+	`curl -fsSL --retry 3 https://claude.ai/install.sh | CLAUDE_CONFIG_DIR="$HOME/.cache/weft-install" bash; ` +
+	`rm -rf "$HOME/.cache/weft-install"; ` +
 	`command -v claude >/dev/null 2>&1 && break; ` +
 	`printf "weft: install failed — Enter to retry, s+Enter for a shell: "; ` +
 	`read -r a; [ "$a" = s ] && break; ` +
@@ -118,28 +122,41 @@ repositories; piped output prints a plain table.`,
 	cmd.Flags().BoolVar(&start, "start", false, "bring a stopped devcontainer up before attaching")
 	cmd.Flags().BoolVar(&shell, "shell", false, "open a shell pane instead of claude")
 	cmd.Flags().BoolVar(&noSidebar, "no-sidebar", false, "do not add the sidebar pane to the grid")
-	cmd.AddCommand(newDcSidebarCmd(), newDcTokenCmd(), newDcSelectCmd())
+	cmd.AddCommand(newDcSidebarCmd(), newDcTokenCmd(), newDcSelectCmd(), newDcKeysCmd())
 	return cmd
 }
 
-// dcInstallNumberKeys binds Ctrl+1…9 (via extended keys), Option+1…9, and
-// prefix 1…9 to "show devcontainer N" — scoped to the weft/dc session; every
-// other session keeps the key's normal behavior.
+// dcUserKeySeq is the byte sequence ghostty is taught to send for Ctrl+<d>
+// (via `weft dc keys`); tmux maps it to the User<d> key.
+func dcUserKeySeq(d int) string { return fmt.Sprintf("\x1b[weft%d~", d) }
+
+// dcInstallNumberKeys binds number keys to "show devcontainer N" — scoped to
+// the weft/dc session; every other session keeps the key's normal behavior.
+// Ctrl+digit arrives as a user-key sequence emitted by the terminal (see
+// `weft dc keys`); Option+digit and prefix digit are bound as fallbacks.
 func dcInstallNumberKeys(ctx context.Context, tm tmux.Tmux) {
 	exe, err := executablePath()
 	if err != nil {
 		return // no hotkeys rather than no attach
 	}
-	// Lets ghostty (kitty keyboard protocol) report Ctrl+digit distinctly.
+	// Lets terminals with the kitty keyboard protocol report Ctrl+digit too.
 	_ = tm.SetServerOption(ctx, "extended-keys", "on")
 	const cond = "#{==:#{session_name}," + dcTmuxSession + "}"
 	for d := 1; d <= 9; d++ {
 		n := strconv.Itoa(d)
 		sel := fmt.Sprintf("run-shell -b '%s dc select %s >/dev/null 2>&1'", exe, n)
+		_ = tm.SetServerOption(ctx, "user-keys["+n+"]", dcUserKeySeq(d))
+		_ = tm.BindKey(ctx, "root", "User"+n, []string{"if", "-F", cond, sel, ""})
 		_ = tm.BindKey(ctx, "root", "C-"+n, []string{"if", "-F", cond, sel, "send-keys C-" + n})
 		_ = tm.BindKey(ctx, "root", "M-"+n, []string{"if", "-F", cond, sel, "send-keys M-" + n})
 		_ = tm.BindKey(ctx, "prefix", n, []string{"if", "-F", cond, sel, "select-window -t :=" + n})
 	}
+	// Pane-scoped mouse copy: dragging must select only the pane under the
+	// cursor (terminal-level selection sweeps across pane borders). Mouse mode
+	// is a session option, so other sessions are untouched; the drag binding
+	// forces tmux's own selection even over apps that grab the mouse.
+	_ = tm.SetSessionOption(ctx, dcTmuxSession, "mouse", "on")
+	_ = tm.BindKey(ctx, "root", "MouseDrag1Pane", []string{"if", "-F", cond, "copy-mode -M", "send-keys -M"})
 }
 
 // dcRunner builds the runner for dc commands (which never open a weft project).

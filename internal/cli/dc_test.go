@@ -231,6 +231,21 @@ func TestDcParkNameAndBareShell(t *testing.T) {
 }
 
 func TestDcDryRun(t *testing.T) {
+	t.Run("keys snippet", func(t *testing.T) {
+		out, _, err := runCLI(t, dcHandler(dcFixture(), dcTmuxState{}), "", "dc", "keys")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(out, "keybind = ctrl+"); n != 9 {
+			t.Errorf("keybind lines = %d, want 9:\n%s", n, out)
+		}
+		for _, want := range []string{`keybind = ctrl+one=text:\x1b[weft1~`, `ctrl+nine=text:\x1b[weft9~`, "reload"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("snippet missing %q:\n%s", want, out)
+			}
+		}
+	})
+
 	t.Run("claude chain", func(t *testing.T) {
 		out, _, err := runCLI(t, dcHandler(dcFixture(), dcTmuxState{}), "", "dc", "oasys-ui", "--dry-run")
 		if err != nil {
@@ -246,6 +261,8 @@ func TestDcDryRun(t *testing.T) {
 			"command -v claude",
 			"sudo -n chown",
 			"curl -fsSL --retry 3 https://claude.ai/install.sh",
+			`CLAUDE_CONFIG_DIR="$HOME/.cache/weft-install" bash`,
+			`rm -rf "$HOME/.cache/weft-install"`,
 			"Enter to retry",
 			"claude --continue || claude",
 			"exec zsh -l",
@@ -334,8 +351,14 @@ func TestDcShowFlows(t *testing.T) {
 				nBind++
 			}
 		}
-		if nBind != 27 { // C-1..9, M-1..9, prefix 1..9
-			t.Errorf("bind-key calls = %d, want 27", nBind)
+		if nBind != 37 { // User/C-/M- 1..9 at root, prefix 1..9, MouseDrag1Pane
+			t.Errorf("bind-key calls = %d, want 37", nBind)
+		}
+		if b := recorded(lines, "bind-key -T root User4"); !strings.Contains(b, "dc select 4") {
+			t.Errorf("User4 binding = %q", b)
+		}
+		if uk := recorded(lines, "user-keys[4]"); !strings.Contains(uk, "[weft4~") {
+			t.Errorf("user-keys[4] = %q", uk)
 		}
 		if b := recorded(lines, "bind-key -T root C-3"); !strings.Contains(b, "dc select 3") || !strings.Contains(b, "send-keys C-3") {
 			t.Errorf("C-3 binding = %q", b)
@@ -345,6 +368,12 @@ func TestDcShowFlows(t *testing.T) {
 		}
 		if ek := recorded(lines, "extended-keys"); !strings.Contains(ek, "-s extended-keys on") {
 			t.Errorf("extended-keys = %q", ek)
+		}
+		if ms := recorded(lines, "set-option -t weft/dc mouse"); !strings.Contains(ms, "mouse on") {
+			t.Errorf("mouse option = %q", ms)
+		}
+		if md := recorded(lines, "MouseDrag1Pane"); !strings.Contains(md, "copy-mode -M") || !strings.Contains(md, "send-keys -M") {
+			t.Errorf("drag binding = %q", md)
 		}
 	})
 
